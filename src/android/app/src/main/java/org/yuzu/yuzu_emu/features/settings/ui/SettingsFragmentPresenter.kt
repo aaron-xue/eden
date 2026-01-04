@@ -10,6 +10,7 @@ import androidx.preference.PreferenceManager
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.YuzuApplication
+import org.yuzu.yuzu_emu.activities.EmulationActivity
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.features.input.model.AnalogDirection
 import org.yuzu.yuzu_emu.features.input.model.NativeAnalog
@@ -28,6 +29,7 @@ import org.yuzu.yuzu_emu.features.settings.model.StringSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.*
 import org.yuzu.yuzu_emu.utils.InputHandler
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
@@ -108,6 +110,7 @@ class SettingsFragmentPresenter(
             MenuTag.SECTION_APP_SETTINGS -> addThemeSettings(sl)
             MenuTag.SECTION_DEBUG -> addDebugSettings(sl)
             MenuTag.SECTION_APPLETS -> addAppletSettings(sl)
+            MenuTag.SECTION_CUSTOM_PATHS -> addCustomPathsSettings(sl)
         }
         settingsList = sl
         adapter.submitList(settingsList) {
@@ -186,6 +189,16 @@ class SettingsFragmentPresenter(
                     menuKey = MenuTag.SECTION_APPLETS
                 )
             )
+            if (!NativeConfig.isPerGameConfigLoaded()) {
+                add(
+                    SubmenuSetting(
+                        titleId = R.string.preferences_custom_paths,
+                        descriptionId = R.string.preferences_custom_paths_description,
+                        iconId = R.drawable.ic_folder_open,
+                        menuKey = MenuTag.SECTION_CUSTOM_PATHS
+                    )
+                )
+            }
             add(
                 RunnableSetting(
                     titleId = R.string.reset_to_default,
@@ -294,6 +307,19 @@ class SettingsFragmentPresenter(
 
     private fun addInputOverlaySettings(sl: ArrayList<SettingsItem>) {
         sl.apply {
+            add(BooleanSetting.SHOW_INPUT_OVERLAY.key)
+            add(BooleanSetting.OVERLAY_SNAP_TO_GRID.key)
+            add(IntSetting.OVERLAY_GRID_SIZE.key)
+            add(
+                LaunchableSetting(
+                    titleId = R.string.edit_overlay_layout,
+                    descriptionId = R.string.edit_overlay_layout_description,
+                    launchIntent = { context ->
+                        EmulationActivity.launchForOverlayEdit(context)
+                    }
+                )
+            )
+            add(HeaderSetting(R.string.input_overlay_behavior))
             add(BooleanSetting.ENABLE_INPUT_OVERLAY_AUTO_HIDE.key)
             add(IntSetting.INPUT_OVERLAY_AUTO_HIDE.key)
             add(BooleanSetting.HIDE_OVERLAY_ON_CONTROLLER_INPUT.key)
@@ -1099,14 +1125,16 @@ class SettingsFragmentPresenter(
                 )
             )
 
-            add(
-                SingleChoiceSetting(
-                    staticThemeColor,
-                    titleId = R.string.static_theme_color,
-                    choicesId = R.array.staticThemeNames,
-                    valuesId = R.array.staticThemeValues
+            if (IntSetting.THEME.getInt() != 1) {
+                add(
+                    SingleChoiceSetting(
+                        staticThemeColor,
+                        titleId = R.string.static_theme_color,
+                        choicesId = R.array.staticThemeNames,
+                        valuesId = R.array.staticThemeValues
+                    )
                 )
-            )
+            }
 
             val blackBackgrounds: AbstractBooleanSetting = object : AbstractBooleanSetting {
                 override fun getBoolean(needsGlobal: Boolean): Boolean =
@@ -1166,6 +1194,44 @@ class SettingsFragmentPresenter(
             add(HeaderSetting(R.string.general))
 
             add(IntSetting.DEBUG_KNOBS.key)
+        }
+    }
+
+    private fun addCustomPathsSettings(sl: ArrayList<SettingsItem>) {
+        sl.apply {
+            add(
+                PathSetting(
+                    titleId = R.string.custom_save_directory,
+                    descriptionId = R.string.custom_save_directory_description,
+                    iconId = R.drawable.ic_save,
+                    pathType = PathSetting.PathType.SAVE_DATA,
+                    defaultPathGetter = { NativeConfig.getDefaultSaveDir() },
+                    currentPathGetter = { NativeConfig.getSaveDir() },
+                    pathSetter = { path -> NativeConfig.setSaveDir(path) }
+                )
+            )
+            add(
+                PathSetting(
+                    titleId = R.string.custom_nand_directory,
+                    descriptionId = R.string.custom_nand_directory_description,
+                    iconId = R.drawable.ic_folder_open,
+                    pathType = PathSetting.PathType.NAND,
+                    defaultPathGetter = { DirectoryInitialization.userDirectory + "/nand" },
+                    currentPathGetter = { NativeConfig.getNandDir() },
+                    pathSetter = { path -> NativeConfig.setNandDir(path) }
+                )
+            )
+            add(
+                PathSetting(
+                    titleId = R.string.custom_sdmc_directory,
+                    descriptionId = R.string.custom_sdmc_directory_description,
+                    iconId = R.drawable.ic_folder_open,
+                    pathType = PathSetting.PathType.SDMC,
+                    defaultPathGetter = { DirectoryInitialization.userDirectory + "/sdmc" },
+                    currentPathGetter = { NativeConfig.getSdmcDir() },
+                    pathSetter = { path -> NativeConfig.setSdmcDir(path) }
+                )
+            )
         }
     }
 }

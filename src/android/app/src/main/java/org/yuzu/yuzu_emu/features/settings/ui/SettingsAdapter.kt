@@ -93,6 +93,13 @@ class SettingsAdapter(
                 StringInputViewHolder(ListItemSettingBinding.inflate(inflater), this)
             }
 
+            SettingsItem.TYPE_LAUNCHABLE -> {
+                LaunchableViewHolder(ListItemSettingBinding.inflate(inflater), this)
+            }
+			
+            SettingsItem.TYPE_PATH -> {
+                PathViewHolder(ListItemSettingBinding.inflate(inflater), this)
+            }
             else -> {
                 HeaderViewHolder(ListItemSettingsHeaderBinding.inflate(inflater), this)
             }
@@ -207,6 +214,11 @@ class SettingsAdapter(
     fun onSubmenuClick(item: SubmenuSetting) {
         val action = SettingsNavigationDirections.actionGlobalSettingsFragment(item.menuKey, null)
         fragment.view?.findNavController()?.navigate(action)
+    }
+
+    fun onLaunchableClick(item: LaunchableSetting) {
+        val intent = item.launchIntent(context)
+        fragment.requireActivity().startActivity(intent)
     }
 
     fun onInputProfileClick(item: InputProfileSetting, position: Int) {
@@ -440,6 +452,18 @@ class SettingsAdapter(
         item.setting.global = true
         notifyItemChanged(position)
         settingsViewModel.setShouldReloadSettingsList(true)
+    }
+
+    fun onPathClick(item: PathSetting, position: Int) {
+        settingsViewModel.clickedItem = item
+        settingsViewModel.setPathSettingPosition(position)
+        settingsViewModel.setShouldShowPathPicker(true)
+    }
+
+    fun onPathReset(item: PathSetting, position: Int) {
+        settingsViewModel.clickedItem = item
+        settingsViewModel.setPathSettingPosition(position)
+        settingsViewModel.setShouldShowPathResetDialog(true)
     }
 
     private class DiffCallback : DiffUtil.ItemCallback<SettingsItem>() {
