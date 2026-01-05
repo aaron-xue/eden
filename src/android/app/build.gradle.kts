@@ -58,7 +58,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "dev.eden.eden_emulator"
+        applicationId = "com.tencent.tmgp.speedmobile"
         minSdk = 24
         targetSdk = 36
         versionName = getGitVersion()
