@@ -87,3 +87,8 @@ If you would prefer to support us in a different way, please join our [Discord](
 ## License
 
 Eden is licensed under the GPLv3 (or any later version). Refer to the [LICENSE.txt](https://git.eden-emu.dev/eden-emu/eden/src/branch/master/LICENSE.txt) file.
+
+## 各种游戏包名
+com.tencent.tmgp.speedmobile QQ飞车
+com.tencent.tmgp.pubgmhd 和平精英
+com.tencent.jkchess 金铲铲
