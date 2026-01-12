@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <limits>
+
 #include "video_core/buffer_cache/buffer_cache_base.h"
 #include "video_core/buffer_cache/memory_tracker_base.h"
 #include "video_core/buffer_cache/usage_tracker.h"
@@ -94,6 +96,8 @@ public:
 
     bool CanReportMemoryUsage() const;
 
+    u32 GetUniformBufferAlignment() const;
+
     u32 GetStorageBufferAlignment() const;
 
     [[nodiscard]] StagingBufferRef UploadStagingBuffer(size_t size);
@@ -127,15 +131,9 @@ public:
 
     void BindTransformFeedbackBuffers(VideoCommon::HostBindings<Buffer>& bindings);
 
-    std::span<u8> BindMappedUniformBuffer([[maybe_unused]] size_t /*stage*/,
-                                          [[maybe_unused]] u32 /*binding_index*/,
+    std::span<u8> BindMappedUniformBuffer([[maybe_unused]] size_t stage,
+                                          [[maybe_unused]] u32 binding_index,
                                           u32 size) {
-        u32 offset = 0;
-        if (auto span = uniform_ring.Alloc(size, offset); !span.empty()) {
-            BindBuffer(*uniform_ring.buffers[uniform_ring.current_frame], offset, size);
-            return span;
-        }
-        // Fallback for giant requests
         const StagingBufferRef ref = staging_pool.Request(size, MemoryUsage::Upload);
         BindBuffer(ref.buffer, static_cast<u32>(ref.offset), size);
         return ref.mapped_span;
@@ -155,6 +153,14 @@ public:
         guest_descriptor_queue.AddTexelBuffer(buffer.View(offset, size, format));
     }
 
+    bool ShouldLimitDynamicStorageBuffers() const {
+        return limit_dynamic_storage_buffers;
+    }
+
+    u32 GetMaxDynamicStorageBuffers() const {
+        return max_dynamic_storage_buffers;
+    }
+
 private:
     void BindBuffer(VkBuffer buffer, u32 offset, u32 size) {
         guest_descriptor_queue.AddBuffer(buffer, offset, size);
@@ -162,24 +168,6 @@ private:
 
     void ReserveNullBuffer();
     vk::Buffer CreateNullBuffer();
-
-    struct UniformRing {
-        static constexpr size_t NUM_FRAMES = 3;
-        std::array<vk::Buffer, NUM_FRAMES> buffers{};
-        std::array<u8*, NUM_FRAMES> mapped{};
-        u64 size = 0;
-        u64 head = 0;
-        u32 align = 256;
-        size_t current_frame = 0;
-
-        void Init(MemoryAllocator& alloc, u64 bytes, u32 alignment);
-        void BeginFrame() {
-            current_frame = (current_frame + 1) % NUM_FRAMES;
-            head = 0;
-        }
-        std::span<u8> Alloc(u32 bytes, u32& out_offset);
-    };
-    UniformRing uniform_ring;
 
     const Device& device;
     MemoryAllocator& memory_allocator;
@@ -194,6 +182,9 @@ private:
 
     std::unique_ptr<Uint8Pass> uint8_pass;
     QuadIndexedPass quad_index_pass;
+
+    bool limit_dynamic_storage_buffers = false;
+    u32 max_dynamic_storage_buffers = std::numeric_limits<u32>::max();
 };
 
 struct BufferCacheParams {

@@ -730,11 +730,28 @@ jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_doesUpdateMatchProgram(JNIEnv* en
     return false;
 }
 
-void JNICALL Java_org_yuzu_yuzu_1emu_NativeLibrary_initializeGpuDriver(JNIEnv* env, jclass clazz,
+void JNICALL Java_org_yuzu_yuzu_1emu_NativeLibrary_initializeGpuDriver(JNIEnv* env,
+                                                                       [[maybe_unused]] jclass clazz,
                                                                        jstring hook_lib_dir,
                                                                        jstring custom_driver_dir,
                                                                        jstring custom_driver_name,
                                                                        jstring file_redirect_dir) {
+    // Log active Freedreno environment variables
+    const char* tu_debug = getenv("TU_DEBUG");
+    const char* fd_debug = getenv("FD_MESA_DEBUG");
+    const char* ir3_debug = getenv("IR3_SHADER_DEBUG");
+    const char* fd_rd_dump = getenv("FD_RD_DUMP");
+    const char* tu_breadcrumbs = getenv("TU_BREADCRUMBS");
+
+    if (tu_debug || fd_debug || ir3_debug || fd_rd_dump || tu_breadcrumbs) {
+        LOG_INFO(Frontend, "[Freedreno] Initializing GPU driver with configuration:");
+        if (tu_debug) LOG_INFO(Frontend, "[Freedreno]   TU_DEBUG={}", tu_debug);
+        if (fd_debug) LOG_INFO(Frontend, "[Freedreno]   FD_MESA_DEBUG={}", fd_debug);
+        if (ir3_debug) LOG_INFO(Frontend, "[Freedreno]   IR3_SHADER_DEBUG={}", ir3_debug);
+        if (fd_rd_dump) LOG_INFO(Frontend, "[Freedreno]   FD_RD_DUMP={}", fd_rd_dump);
+        if (tu_breadcrumbs) LOG_INFO(Frontend, "[Freedreno]   TU_BREADCRUMBS={}", tu_breadcrumbs);
+    }
+
     EmulationSession::GetInstance().InitializeGpuDriver(
         Common::Android::GetJString(env, hook_lib_dir),
         Common::Android::GetJString(env, custom_driver_dir),
@@ -1166,11 +1183,8 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_initializeEmptyUserDirectory(JNIEnv* 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerInit(JNIEnv* env, jobject obj) {
     // for some reason the full user directory isnt initialized in Android, so we need to create it
     const auto play_time_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::PlayTimeDir);
-    if (!Common::FS::IsDir(play_time_dir)) {
-        if (!Common::FS::CreateDir(play_time_dir)) {
-            LOG_WARNING(Frontend, "Failed to create play time directory");
-        }
-    }
+    if (!Common::FS::IsDir(play_time_dir) && !Common::FS::CreateDir(play_time_dir))
+        LOG_WARNING(Frontend, "Failed to create play time directory");
 
     play_time_manager = std::make_unique<PlayTime::PlayTimeManager>();
 }
@@ -1183,13 +1197,16 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerStart(JNIEnv* env, job
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerStop(JNIEnv* env, jobject obj) {
-    play_time_manager->Stop();
+    if (play_time_manager)
+        play_time_manager->Stop();
 }
 
-jlong Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerGetPlayTime(JNIEnv* env, jobject obj,
-                                                                       jstring jprogramId) {
-    u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
-    return play_time_manager->GetPlayTime(program_id);
+jlong Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerGetPlayTime(JNIEnv* env, jobject obj, jstring jprogramId) {
+    if (play_time_manager) {
+        u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
+        return play_time_manager->GetPlayTime(program_id);
+    }
+    return 0UL;
 }
 
 jlong Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerGetCurrentTitleId(JNIEnv* env,
@@ -1199,17 +1216,17 @@ jlong Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerGetCurrentTitleId(JNI
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerResetProgramPlayTime(JNIEnv* env, jobject obj,
                                                                 jstring jprogramId) {
-    u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
     if (play_time_manager) {
+        u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
         play_time_manager->ResetProgramPlayTime(program_id);
     }
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_playTimeManagerSetPlayTime(JNIEnv* env, jobject obj,
                                                                 jstring jprogramId, jlong playTimeSeconds) {
-    u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
     if (play_time_manager) {
-        play_time_manager->SetPlayTime(program_id, static_cast<u64>(playTimeSeconds));
+        u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
+        play_time_manager->SetPlayTime(program_id, u64(playTimeSeconds));
     }
 }
 
@@ -1389,12 +1406,12 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getSavePath(JNIEnv* env, jobject j
     const auto user_id = manager.GetUser(static_cast<std::size_t>(0));
     ASSERT(user_id);
 
-    const auto nandDir = Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir);
-    auto vfsNandDir = system.GetFilesystem()->OpenDirectory(Common::FS::PathToUTF8String(nandDir),
+    const auto saveDir = Common::FS::GetEdenPath(Common::FS::EdenPath::SaveDir);
+    auto vfsSaveDir = system.GetFilesystem()->OpenDirectory(Common::FS::PathToUTF8String(saveDir),
                                                             FileSys::OpenMode::Read);
 
     const auto user_save_data_path = FileSys::SaveDataFactory::GetFullPath(
-        {}, vfsNandDir, FileSys::SaveDataSpaceId::User, FileSys::SaveDataType::Account, program_id,
+        {}, vfsSaveDir, FileSys::SaveDataSpaceId::User, FileSys::SaveDataType::Account, program_id,
         user_id->AsU128(), 0);
     return Common::Android::ToJString(env, user_save_data_path);
 }

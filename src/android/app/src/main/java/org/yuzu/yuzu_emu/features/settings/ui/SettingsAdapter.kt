@@ -29,6 +29,7 @@ import org.yuzu.yuzu_emu.databinding.ListItemSettingsHeaderBinding
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.features.input.model.AnalogDirection
 import org.yuzu.yuzu_emu.features.settings.model.AbstractIntSetting
+import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.features.settings.model.view.*
 import org.yuzu.yuzu_emu.features.settings.ui.viewholder.*
 import org.yuzu.yuzu_emu.utils.ParamPackage
@@ -93,6 +94,13 @@ class SettingsAdapter(
                 StringInputViewHolder(ListItemSettingBinding.inflate(inflater), this)
             }
 
+            SettingsItem.TYPE_LAUNCHABLE -> {
+                LaunchableViewHolder(ListItemSettingBinding.inflate(inflater), this)
+            }
+			
+            SettingsItem.TYPE_PATH -> {
+                PathViewHolder(ListItemSettingBinding.inflate(inflater), this)
+            }
             else -> {
                 HeaderViewHolder(ListItemSettingsHeaderBinding.inflate(inflater), this)
             }
@@ -205,8 +213,20 @@ class SettingsAdapter(
     }
 
     fun onSubmenuClick(item: SubmenuSetting) {
-        val action = SettingsNavigationDirections.actionGlobalSettingsFragment(item.menuKey, null)
-        fragment.view?.findNavController()?.navigate(action)
+        // Check if this is the Freedreno Settings submenu
+        if (item.menuKey == Settings.MenuTag.SECTION_FREEDRENO) {
+            fragment.view?.findNavController()?.navigate(
+                R.id.action_settingsFragment_to_freedrenoSettingsFragment
+            )
+        } else {
+            val action = SettingsNavigationDirections.actionGlobalSettingsFragment(item.menuKey, null)
+            fragment.view?.findNavController()?.navigate(action)
+        }
+    }
+
+    fun onLaunchableClick(item: LaunchableSetting) {
+        val intent = item.launchIntent(context)
+        fragment.requireActivity().startActivity(intent)
     }
 
     fun onInputProfileClick(item: InputProfileSetting, position: Int) {
@@ -440,6 +460,18 @@ class SettingsAdapter(
         item.setting.global = true
         notifyItemChanged(position)
         settingsViewModel.setShouldReloadSettingsList(true)
+    }
+
+    fun onPathClick(item: PathSetting, position: Int) {
+        settingsViewModel.clickedItem = item
+        settingsViewModel.setPathSettingPosition(position)
+        settingsViewModel.setShouldShowPathPicker(true)
+    }
+
+    fun onPathReset(item: PathSetting, position: Int) {
+        settingsViewModel.clickedItem = item
+        settingsViewModel.setPathSettingPosition(position)
+        settingsViewModel.setShouldShowPathResetDialog(true)
     }
 
     private class DiffCallback : DiffUtil.ItemCallback<SettingsItem>() {

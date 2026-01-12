@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <optional>
 #include <set>
 #include <span>
 #include <string>
@@ -37,9 +38,13 @@ VK_DEFINE_HANDLE(VmaAllocator)
     FEATURE(KHR, TimelineSemaphore, TIMELINE_SEMAPHORE, timeline_semaphore)
 
 #define FOR_EACH_VK_FEATURE_1_3(FEATURE)                                                           \
+    FEATURE(EXT, ImageRobustness, IMAGE_ROBUSTNESS, image_robustness)                              \
     FEATURE(EXT, ShaderDemoteToHelperInvocation, SHADER_DEMOTE_TO_HELPER_INVOCATION,               \
             shader_demote_to_helper_invocation)                                                    \
-    FEATURE(EXT, SubgroupSizeControl, SUBGROUP_SIZE_CONTROL, subgroup_size_control)
+    FEATURE(EXT, SubgroupSizeControl, SUBGROUP_SIZE_CONTROL, subgroup_size_control)                \
+    FEATURE(KHR, Maintenance4, MAINTENANCE_4, maintenance4)
+
+#define FOR_EACH_VK_FEATURE_1_4(FEATURE)
 
 // Define all features which may be used by the implementation and require an extension here.
 #define FOR_EACH_VK_FEATURE_EXT(FEATURE)                                                           \
@@ -52,12 +57,16 @@ VK_DEFINE_HANDLE(VmaAllocator)
     FEATURE(EXT, 4444Formats, 4444_FORMATS, format_a4b4g4r4)                                       \
     FEATURE(EXT, IndexTypeUint8, INDEX_TYPE_UINT8, index_type_uint8)                               \
     FEATURE(EXT, LineRasterization, LINE_RASTERIZATION, line_rasterization)                        \
+    FEATURE(EXT, MultiDraw, MULTI_DRAW, multi_draw)                                                \
     FEATURE(EXT, PrimitiveTopologyListRestart, PRIMITIVE_TOPOLOGY_LIST_RESTART,                    \
             primitive_topology_list_restart)                                                       \
     FEATURE(EXT, ProvokingVertex, PROVOKING_VERTEX, provoking_vertex)                              \
     FEATURE(EXT, Robustness2, ROBUSTNESS_2, robustness2)                                           \
     FEATURE(EXT, TransformFeedback, TRANSFORM_FEEDBACK, transform_feedback)                        \
     FEATURE(EXT, VertexInputDynamicState, VERTEX_INPUT_DYNAMIC_STATE, vertex_input_dynamic_state)  \
+    FEATURE(EXT, SwapchainMaintenance1, SWAPCHAIN_MAINTENANCE_1, swapchain_maintenance1)           \
+    FEATURE(KHR, Maintenance5, MAINTENANCE_5, maintenance5)                                        \
+    FEATURE(KHR, Maintenance6, MAINTENANCE_6, maintenance6)                                        \
     FEATURE(KHR, PipelineExecutableProperties, PIPELINE_EXECUTABLE_PROPERTIES,                     \
             pipeline_executable_properties)                                                        \
     FEATURE(KHR, WorkgroupMemoryExplicitLayout, WORKGROUP_MEMORY_EXPLICIT_LAYOUT,                  \
@@ -84,6 +93,12 @@ VK_DEFINE_HANDLE(VmaAllocator)
     EXTENSION(KHR, SWAPCHAIN, swapchain)                                                           \
     EXTENSION(KHR, SWAPCHAIN_MUTABLE_FORMAT, swapchain_mutable_format)                             \
     EXTENSION(KHR, IMAGE_FORMAT_LIST, image_format_list)                                           \
+    EXTENSION(KHR, MAINTENANCE_1, maintenance1)                                                    \
+    EXTENSION(KHR, MAINTENANCE_2, maintenance2)                                                    \
+    EXTENSION(KHR, MAINTENANCE_3, maintenance3)                                                    \
+    EXTENSION(KHR, MAINTENANCE_7, maintenance7)                                                    \
+    EXTENSION(KHR, MAINTENANCE_8, maintenance8)                                                    \
+    EXTENSION(KHR, MAINTENANCE_9, maintenance9)                                                    \
     EXTENSION(NV, DEVICE_DIAGNOSTICS_CONFIG, device_diagnostics_config)                            \
     EXTENSION(NV, GEOMETRY_SHADER_PASSTHROUGH, geometry_shader_passthrough)                        \
     EXTENSION(NV, VIEWPORT_ARRAY2, viewport_array2)                                                \
@@ -110,6 +125,7 @@ VK_DEFINE_HANDLE(VmaAllocator)
     EXTENSION_NAME(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME)                                 \
     EXTENSION_NAME(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME)                                     \
     EXTENSION_NAME(VK_EXT_4444_FORMATS_EXTENSION_NAME)                                             \
+    EXTENSION_NAME(VK_EXT_IMAGE_ROBUSTNESS_EXTENSION_NAME)                                         \
     EXTENSION_NAME(VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME)                                       \
     EXTENSION_NAME(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME)                                             \
     EXTENSION_NAME(VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME)                               \
@@ -161,6 +177,7 @@ VK_DEFINE_HANDLE(VmaAllocator)
     FEATURE_NAME(depth_bias_control, depthBiasExact)                                               \
     FEATURE_NAME(extended_dynamic_state, extendedDynamicState)                                     \
     FEATURE_NAME(format_a4b4g4r4, formatA4B4G4R4)                                                  \
+    FEATURE_NAME(image_robustness, robustImageAccess)                                              \
     FEATURE_NAME(index_type_uint8, indexTypeUint8)                                                 \
     FEATURE_NAME(primitive_topology_list_restart, primitiveTopologyListRestart)                    \
     FEATURE_NAME(provoking_vertex, provokingVertexLast)                                            \
@@ -310,6 +327,16 @@ public:
         return properties.properties.limits.maxComputeSharedMemorySize;
     }
 
+    /// Returns the maximum number of dynamic storage buffer descriptors per set.
+    u32 GetMaxDescriptorSetStorageBuffersDynamic() const {
+        return properties.properties.limits.maxDescriptorSetStorageBuffersDynamic;
+    }
+
+    /// Returns the maximum number of dynamic uniform buffer descriptors per set.
+    u32 GetMaxDescriptorSetUniformBuffersDynamic() const {
+        return properties.properties.limits.maxDescriptorSetUniformBuffersDynamic;
+    }
+
     /// Returns float control properties of the device.
     const VkPhysicalDeviceFloatControlsPropertiesKHR& FloatControlProperties() const {
         return properties.float_controls;
@@ -440,6 +467,11 @@ public:
         return extensions.swapchain_mutable_format;
     }
 
+    /// Returns true if VK_EXT_swapchain_maintenance1 is enabled.
+    bool IsExtSwapchainMaintenance1Enabled() const {
+        return extensions.swapchain_maintenance1;
+    }
+
     /// Returns true if VK_KHR_shader_float_controls is enabled.
     bool IsKhrShaderFloatControlsSupported() const {
         return extensions.shader_float_controls;
@@ -476,8 +508,16 @@ public:
     }
 
     /// Returns true if the device supports VK_EXT_shader_stencil_export.
+    /// Note: Most Mali/NVIDIA drivers don't support this. Use hardware blits as fallback.
     bool IsExtShaderStencilExportSupported() const {
         return extensions.shader_stencil_export;
+    }
+
+    /// Returns true if depth/stencil operations can be performed efficiently.
+    /// Either through shader export or hardware blits.
+    bool CanPerformDepthStencilOperations() const {
+        return extensions.shader_stencil_export || is_blit_depth24_stencil8_supported ||
+               is_blit_depth32_stencil8_supported;
     }
 
     /// Returns true if the device supports VK_EXT_depth_range_unrestricted.
@@ -518,6 +558,46 @@ public:
     /// Returns true if the device supports VK_EXT_custom_border_color.
     bool IsExtCustomBorderColorSupported() const {
         return extensions.custom_border_color;
+    }
+
+    /// Returns true if the device supports VK_EXT_image_robustness.
+    bool IsExtImageRobustnessSupported() const {
+        return extensions.image_robustness;
+    }
+
+    /// Returns true if robustImageAccess is supported.
+    bool IsRobustImageAccessSupported() const {
+        return features.image_robustness.robustImageAccess;
+    }
+
+    /// Returns true if the device supports VK_EXT_robustness2.
+    bool IsExtRobustness2Supported() const {
+        return extensions.robustness_2;
+    }
+
+    /// Returns true if robustBufferAccess2 is supported.
+    bool IsRobustBufferAccess2Supported() const {
+        return features.robustness2.robustBufferAccess2;
+    }
+
+    /// Returns true if robustImageAccess2 is supported.
+    bool IsRobustImageAccess2Supported() const {
+        return features.robustness2.robustImageAccess2;
+    }
+
+    /// Returns true if nullDescriptor is supported.
+    bool IsNullDescriptorSupported() const {
+        return features.robustness2.nullDescriptor;
+    }
+
+    /// Returns true if customBorderColors feature is available.
+    bool IsCustomBorderColorsSupported() const {
+        return features.custom_border_color.customBorderColors;
+    }
+
+    /// Returns true if customBorderColorWithoutFormat feature is available.
+    bool IsCustomBorderColorWithoutFormatSupported() const {
+        return features.custom_border_color.customBorderColorWithoutFormat;
     }
 
     /// Returns true if the device supports VK_EXT_extended_dynamic_state.
@@ -567,6 +647,50 @@ public:
     /// Returns true if the device supports VK_EXT_line_rasterization.
     bool IsExtLineRasterizationSupported() const {
         return extensions.line_rasterization;
+    }
+
+    bool SupportsRectangularLines() const {
+        return features.line_rasterization.rectangularLines != VK_FALSE;
+    }
+
+    bool SupportsSmoothLines() const {
+        return features.line_rasterization.smoothLines != VK_FALSE;
+    }
+
+    bool SupportsStippledRectangularLines() const {
+        return features.line_rasterization.stippledRectangularLines != VK_FALSE;
+    }
+
+    bool SupportsAlphaToOne() const {
+        return features.features.alphaToOne != VK_FALSE;
+    }
+
+    bool SupportsDynamicState3DepthClampEnable() const {
+        return dynamic_state3_depth_clamp_enable;
+    }
+
+    bool SupportsDynamicState3LogicOpEnable() const {
+        return dynamic_state3_logic_op_enable;
+    }
+
+    bool SupportsDynamicState3LineRasterizationMode() const {
+        return dynamic_state3_line_raster_mode;
+    }
+
+    bool SupportsDynamicState3ConservativeRasterizationMode() const {
+        return dynamic_state3_conservative_raster_mode;
+    }
+
+    bool SupportsDynamicState3LineStippleEnable() const {
+        return dynamic_state3_line_stipple_enable;
+    }
+
+    bool SupportsDynamicState3AlphaToCoverageEnable() const {
+        return dynamic_state3_alpha_to_coverage;
+    }
+
+    bool SupportsDynamicState3AlphaToOneEnable() const {
+        return dynamic_state3_alpha_to_one;
     }
 
     /// Returns true if the device supports VK_EXT_vertex_input_dynamic_state.
@@ -630,6 +754,8 @@ public:
     bool HasBrokenParallelShaderCompiling() const {
         return has_broken_parallel_compiling;
     }
+
+    std::optional<size_t> GetSamplerHeapBudget() const;
 
     /// Returns the vendor name reported from Vulkan.
     std::string_view GetVendorName() const {
@@ -701,6 +827,73 @@ public:
 
     bool SupportsMultiViewport() const {
         return features2.features.multiViewport;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance1.
+    bool IsKhrMaintenance1Supported() const {
+        return extensions.maintenance1;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance2.
+    bool IsKhrMaintenance2Supported() const {
+        return extensions.maintenance2;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance3.
+    bool IsKhrMaintenance3Supported() const {
+        return extensions.maintenance3;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance4.
+    bool IsKhrMaintenance4Supported() const {
+        return extensions.maintenance4;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance5.
+    bool IsKhrMaintenance5Supported() const {
+        return extensions.maintenance5;
+    }
+
+    /// Returns true if polygon mode POINT supports gl_PointSize.
+    bool SupportsPolygonModePointSize() const {
+        return extensions.maintenance5 && properties.maintenance5.polygonModePointSize;
+    }
+
+    /// Returns true if depth/stencil swizzle ONE is supported.
+    bool SupportsDepthStencilSwizzleOne() const {
+        return extensions.maintenance5 && properties.maintenance5.depthStencilSwizzleOneSupport;
+    }
+
+    /// Returns true if early fragment tests optimizations are available.
+    bool SupportsEarlyFragmentTests() const {
+        return extensions.maintenance5 &&
+               properties.maintenance5.earlyFragmentMultisampleCoverageAfterSampleCounting &&
+               properties.maintenance5.earlyFragmentSampleMaskTestBeforeSampleCounting;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance6.
+    bool IsKhrMaintenance6Supported() const {
+        return extensions.maintenance6;
+    }
+
+    /// Returns true if the device supports VK_EXT_multi_draw.
+    bool IsExtMultiDrawSupported() const {
+        return extensions.multi_draw;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance7.
+    bool IsKhrMaintenance7Supported() const {
+        return extensions.maintenance7;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance8.
+    bool IsKhrMaintenance8Supported() const {
+        return extensions.maintenance8;
+    }
+
+    /// Returns true if the device supports VK_KHR_maintenance9.
+    bool IsKhrMaintenance9Supported() const {
+        return extensions.maintenance9;
     }
 
     [[nodiscard]] static constexpr bool CheckBrokenCompute(VkDriverId driver_id,
@@ -786,6 +979,7 @@ private:
         FOR_EACH_VK_FEATURE_1_1(FEATURE);
         FOR_EACH_VK_FEATURE_1_2(FEATURE);
         FOR_EACH_VK_FEATURE_1_3(FEATURE);
+        FOR_EACH_VK_FEATURE_1_4(FEATURE);
         FOR_EACH_VK_FEATURE_EXT(FEATURE);
         FOR_EACH_VK_EXTENSION(EXTENSION);
 
@@ -802,6 +996,7 @@ private:
         FOR_EACH_VK_FEATURE_1_1(FEATURE_CORE);
         FOR_EACH_VK_FEATURE_1_2(FEATURE_CORE);
         FOR_EACH_VK_FEATURE_1_3(FEATURE_CORE);
+        FOR_EACH_VK_FEATURE_1_4(FEATURE_CORE);
         FOR_EACH_VK_FEATURE_EXT(FEATURE_EXT);
 
 #undef FEATURE_CORE
@@ -817,6 +1012,8 @@ private:
         VkPhysicalDevicePushDescriptorPropertiesKHR push_descriptor{};
         VkPhysicalDeviceSubgroupSizeControlProperties subgroup_size_control{};
         VkPhysicalDeviceTransformFeedbackPropertiesEXT transform_feedback{};
+        VkPhysicalDeviceMaintenance5PropertiesKHR maintenance5{};
+        VkPhysicalDeviceMultiDrawPropertiesEXT multi_draw{};
 
         VkPhysicalDeviceProperties properties{};
     };
@@ -846,9 +1043,17 @@ private:
     bool cant_blit_msaa{};                     ///< Does not support MSAA<->MSAA blitting.
     bool must_emulate_scaled_formats{};        ///< Requires scaled vertex format emulation
     bool must_emulate_bgr565{};                ///< Emulates BGR565 by swizzling RGB565 format.
-    bool dynamic_state3_blending{};            ///< Has all blending features of dynamic_state3.
-    bool dynamic_state3_enables{};             ///< Has all enables features of dynamic_state3.
+    bool dynamic_state3_blending{};            ///< Has blending features of dynamic_state3.
+    bool dynamic_state3_enables{};             ///< Has at least one enable feature of dynamic_state3.
+    bool dynamic_state3_depth_clamp_enable{};
+    bool dynamic_state3_logic_op_enable{};
+    bool dynamic_state3_line_raster_mode{};
+    bool dynamic_state3_conservative_raster_mode{};
+    bool dynamic_state3_line_stipple_enable{};
+    bool dynamic_state3_alpha_to_coverage{};
+    bool dynamic_state3_alpha_to_one{};
     bool supports_conditional_barriers{};      ///< Allows barriers in conditional control flow.
+    size_t sampler_heap_budget{};              ///< Sampler budget for buggy drivers (0 = unlimited).
     u64 device_access_memory{};                ///< Total size of device local memory in bytes.
     u32 sets_per_pool{};                       ///< Sets per Description Pool
     NvidiaArchitecture nvidia_arch{NvidiaArchitecture::Arch_AmpereOrNewer};

@@ -312,7 +312,7 @@ void BSD::Listen(HLERequestContext& ctx) {
 void BSD::Fcntl(HLERequestContext& ctx) {
     IPC::RequestParser rp{ctx};
     const s32 fd = rp.Pop<s32>();
-    const u32 cmd = rp.Pop<u32>();
+    const s32 cmd = rp.Pop<s32>();
     const s32 arg = rp.Pop<s32>();
 
     LOG_DEBUG(Service, "called. fd={} cmd={} arg={}", fd, cmd, arg);
@@ -627,45 +627,23 @@ std::pair<s32, Errno> BSD::AcceptImpl(s32 fd, std::vector<u8>& write_buffer) {
 
 Errno BSD::BindImpl(s32 fd, std::span<const u8> addr) {
     if (!IsFileDescriptorValid(fd)) {
-        LOG_ERROR(Service, "Bind failed: Invalid fd={}", fd);
         return Errno::BADF;
     }
     ASSERT(addr.size() == sizeof(SockAddrIn));
     auto addr_in = GetValue<SockAddrIn>(addr);
 
-    LOG_INFO(Service, "Bind fd={} to {}:{}", fd, Network::IPv4AddressToString(addr_in.ip),
-             addr_in.portno);
-
-    const auto result = Translate(file_descriptors[fd]->socket->Bind(Translate(addr_in)));
-    if (result != Errno::SUCCESS) {
-        LOG_ERROR(Service, "Bind fd={} failed with errno={}", fd, static_cast<int>(result));
-    }
-    return result;
+    return Translate(file_descriptors[fd]->socket->Bind(Translate(addr_in)));
 }
 
 Errno BSD::ConnectImpl(s32 fd, std::span<const u8> addr) {
     if (!IsFileDescriptorValid(fd)) {
-        LOG_ERROR(Service, "Connect failed: Invalid fd={}", fd);
         return Errno::BADF;
     }
 
     UNIMPLEMENTED_IF(addr.size() != sizeof(SockAddrIn));
     auto addr_in = GetValue<SockAddrIn>(addr);
 
-    LOG_INFO(Service, "Connect fd={} to {}:{}", fd, Network::IPv4AddressToString(addr_in.ip),
-             addr_in.portno);
-
-    const auto result = Translate(file_descriptors[fd]->socket->Connect(Translate(addr_in)));
-    if (result != Errno::SUCCESS) {
-        if (result == Errno::INPROGRESS || result == Errno::AGAIN) {
-            LOG_DEBUG(Service, "Connect fd={} in progress (non-blocking), errno={}", fd, static_cast<int>(result));
-        } else {
-            LOG_ERROR(Service, "Connect fd={} failed with errno={}", fd, static_cast<int>(result));
-        }
-    } else {
-        LOG_INFO(Service, "Connect fd={} succeeded", fd);
-    }
-    return result;
+    return Translate(file_descriptors[fd]->socket->Connect(Translate(addr_in)));
 }
 
 Errno BSD::GetPeerNameImpl(s32 fd, std::vector<u8>& write_buffer) {
@@ -741,8 +719,8 @@ Errno BSD::GetSockOptImpl(s32 fd, u32 level, OptName optname, std::vector<u8>& o
     }
 
     if (level != static_cast<u32>(SocketLevel::SOCKET)) {
-        LOG_WARNING(Service, "(STUBBED) Unknown getsockopt level={}, returning INVAL", level);
-        return Errno::INVAL;
+        UNIMPLEMENTED_MSG("Unknown getsockopt level");
+        return Errno::SUCCESS;
     }
 
     Network::SocketBase* const socket = file_descriptors[fd]->socket.get();
@@ -772,52 +750,32 @@ Errno BSD::SetSockOptImpl(s32 fd, u32 level, OptName optname, std::span<const u8
     }
 
     if (level != static_cast<u32>(SocketLevel::SOCKET)) {
-        LOG_WARNING(Service, "(STUBBED) Unknown setsockopt level={}, returning INVAL", level);
-        return Errno::INVAL;
+        UNIMPLEMENTED_MSG("Unknown setsockopt level");
+        return Errno::SUCCESS;
     }
 
     Network::SocketBase* const socket = file_descriptors[fd]->socket.get();
 
     if (optname == OptName::LINGER) {
-        if (optval.size() != sizeof(Linger)) {
-            LOG_WARNING(Service, "LINGER optval size mismatch: expected {}, got {}", sizeof(Linger),
-                        optval.size());
-            return Errno::INVAL;
-        }
+        ASSERT(optval.size() == sizeof(Linger));
         auto linger = GetValue<Linger>(optval);
-        if (linger.onoff != 0 && linger.onoff != 1) {
-            LOG_WARNING(Service, "Invalid LINGER onoff value: {}", linger.onoff);
-            return Errno::INVAL;
-        }
+        ASSERT(linger.onoff == 0 || linger.onoff == 1);
 
         return Translate(socket->SetLinger(linger.onoff != 0, linger.linger));
     }
 
-    if (optval.size() != sizeof(u32)) {
-        LOG_WARNING(Service, "optval size mismatch: expected {}, got {} for optname={}", sizeof(u32),
-                    optval.size(), static_cast<u32>(optname));
-        return Errno::INVAL;
-    }
+    ASSERT(optval.size() == sizeof(u32));
     auto value = GetValue<u32>(optval);
 
     switch (optname) {
     case OptName::REUSEADDR:
-        if (value != 0 && value != 1) {
-            LOG_WARNING(Service, "Invalid REUSEADDR value: {}", value);
-            return Errno::INVAL;
-        }
+        ASSERT(value == 0 || value == 1);
         return Translate(socket->SetReuseAddr(value != 0));
     case OptName::KEEPALIVE:
-        if (value != 0 && value != 1) {
-            LOG_WARNING(Service, "Invalid KEEPALIVE value: {}", value);
-            return Errno::INVAL;
-        }
+        ASSERT(value == 0 || value == 1);
         return Translate(socket->SetKeepAlive(value != 0));
     case OptName::BROADCAST:
-        if (value != 0 && value != 1) {
-            LOG_WARNING(Service, "Invalid BROADCAST value: {}", value);
-            return Errno::INVAL;
-        }
+        ASSERT(value == 0 || value == 1);
         return Translate(socket->SetBroadcast(value != 0));
     case OptName::SNDBUF:
         return Translate(socket->SetSndBuf(value));
@@ -831,9 +789,8 @@ Errno BSD::SetSockOptImpl(s32 fd, u32 level, OptName optname, std::span<const u8
         LOG_WARNING(Service, "(STUBBED) setting NOSIGPIPE to {}", value);
         return Errno::SUCCESS;
     default:
-        LOG_WARNING(Service, "(STUBBED) Unimplemented optname={} (0x{:x}), returning INVAL",
-                    static_cast<u32>(optname), static_cast<u32>(optname));
-        return Errno::INVAL;
+        UNIMPLEMENTED_MSG("Unimplemented optname={}", optname);
+        return Errno::SUCCESS;
     }
 }
 
@@ -1058,11 +1015,23 @@ BSD::BSD(Core::System& system_, const char* name)
         {26, &BSD::Close, "Close"},
         {27, &BSD::DuplicateSocket, "DuplicateSocket"},
         {28, nullptr, "GetResourceStatistics"},
-        {29, nullptr, "RecvMMsg"},
-        {30, nullptr, "SendMMsg"},
-        {31, &BSD::EventFd, "EventFd"},
-        {32, nullptr, "RegisterResourceStatisticsName"},
-        {33, nullptr, "Initialize2"},
+        {29, nullptr, "RecvMMsg"}, //3.0.0+
+        {30, nullptr, "SendMMsg"}, //3.0.0+
+        {31, &BSD::EventFd, "EventFd"}, //7.0.0+
+        {32, nullptr, "RegisterResourceStatisticsName"}, //7.0.0+
+        {33, nullptr, "RegisterClientShared"}, //10.0.0+
+        {34, nullptr, "GetSocketStatistics"}, //15.0.0+
+        {35, nullptr, "NifIoctl"}, //17.0.0+
+        {36, nullptr, "Unknown36"}, //18.0.0+
+        {37, nullptr, "Unknown37"}, //18.0.0+
+        {38, nullptr, "Unknown38"}, //18.0.0+
+        {39, nullptr, "Unknown39"}, //20.0.0+
+        {40, nullptr, "Unknown40"}, //20.0.0+
+        {41, nullptr, "Unknown41"}, //21.0.0+
+        {42, nullptr, "Unknown42"}, //21.0.0+
+        {43, nullptr, "Unknown43"}, //21.0.0+
+        {200, nullptr, "SetThreadCoreMask"}, //15.0.0+
+        {201, nullptr, "GetThreadCoreMask"}, //15.0.0+
     };
     // clang-format on
 

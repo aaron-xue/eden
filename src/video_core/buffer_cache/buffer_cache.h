@@ -7,7 +7,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cstring>
 #include <memory>
 #include <numeric>
 
@@ -16,8 +15,6 @@
 #include "video_core/guest_memory.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
 #include "video_core/texture_cache/util.h"
-#include "video_core/polygon_mode_utils.h"
-#include "video_core/renderer_vulkan/line_loop_utils.h"
 
 namespace VideoCommon {
 
@@ -356,37 +353,14 @@ void BufferCache<P>::UpdateComputeBuffers() {
 
 template <class P>
 void BufferCache<P>::BindHostGeometryBuffers(bool is_indexed) {
-    const auto& draw_state = maxwell3d->draw_manager->GetDrawState();
     if (is_indexed) {
         BindHostIndexBuffer();
-    } else {
-        if constexpr (!P::IS_OPENGL) {
-            const auto polygon_mode = VideoCore::EffectivePolygonMode(maxwell3d->regs);
-            if (draw_state.topology == Maxwell::PrimitiveTopology::Polygon &&
-                polygon_mode == Maxwell::PolygonMode::Line && draw_state.vertex_buffer.count > 1) {
-                const u32 vertex_count = draw_state.vertex_buffer.count;
-                const u32 generated_count = vertex_count + 1;
-                const bool use_u16 = vertex_count <= 0x10000;
-                const u32 element_size = use_u16 ? sizeof(u16) : sizeof(u32);
-                auto staging = runtime.UploadStagingBuffer(
-                    static_cast<size_t>(generated_count) * element_size);
-                std::span<u8> dst_span{staging.mapped_span.data(),
-                                       generated_count * static_cast<size_t>(element_size)};
-                Vulkan::LineLoop::GenerateSequentialWithClosureRaw(dst_span, element_size);
-                const auto synthetic_format = use_u16 ? Maxwell::IndexFormat::UnsignedShort
-                                                      : Maxwell::IndexFormat::UnsignedInt;
-                runtime.BindIndexBuffer(draw_state.topology, synthetic_format,
-                                        draw_state.vertex_buffer.first, generated_count,
-                                        staging.buffer, static_cast<u32>(staging.offset),
-                                        generated_count * element_size);
-            }
-        }
-        if constexpr (!HAS_FULL_INDEX_AND_PRIMITIVE_SUPPORT) {
-            if (draw_state.topology == Maxwell::PrimitiveTopology::Quads ||
-                draw_state.topology == Maxwell::PrimitiveTopology::QuadStrip) {
-                runtime.BindQuadIndexBuffer(draw_state.topology, draw_state.vertex_buffer.first,
-                                            draw_state.vertex_buffer.count);
-            }
+    } else if constexpr (!HAS_FULL_INDEX_AND_PRIMITIVE_SUPPORT) {
+        const auto& draw_state = maxwell3d->draw_manager->GetDrawState();
+        if (draw_state.topology == Maxwell::PrimitiveTopology::Quads ||
+            draw_state.topology == Maxwell::PrimitiveTopology::QuadStrip) {
+            runtime.BindQuadIndexBuffer(draw_state.topology, draw_state.vertex_buffer.first,
+                                        draw_state.vertex_buffer.count);
         }
     }
     BindHostVertexBuffers();
@@ -433,6 +407,12 @@ void BufferCache<P>::SetComputeUniformBufferState(u32 mask,
 
 template <class P>
 void BufferCache<P>::UnbindGraphicsStorageBuffers(size_t stage) {
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers()) {
+            channel_state->total_graphics_storage_buffers -=
+                static_cast<u32>(std::popcount(channel_state->enabled_storage_buffers[stage]));
+        }
+    }
     channel_state->enabled_storage_buffers[stage] = 0;
     channel_state->written_storage_buffers[stage] = 0;
 }
@@ -440,8 +420,26 @@ void BufferCache<P>::UnbindGraphicsStorageBuffers(size_t stage) {
 template <class P>
 bool BufferCache<P>::BindGraphicsStorageBuffer(size_t stage, size_t ssbo_index, u32 cbuf_index,
                                                u32 cbuf_offset, bool is_written) {
+    const bool already_enabled =
+        ((channel_state->enabled_storage_buffers[stage] >> ssbo_index) & 1U) != 0;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            const u32 max_bindings = runtime.GetMaxDynamicStorageBuffers();
+            if (channel_state->total_graphics_storage_buffers >= max_bindings) {
+                LOG_WARNING(HW_GPU,
+                            "Skipping graphics storage buffer {} due to driver limit {}",
+                            ssbo_index, max_bindings);
+                return false;
+            }
+        }
+    }
     channel_state->enabled_storage_buffers[stage] |= 1U << ssbo_index;
     channel_state->written_storage_buffers[stage] |= (is_written ? 1U : 0U) << ssbo_index;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            ++channel_state->total_graphics_storage_buffers;
+        }
+    }
 
     const auto& cbufs = maxwell3d->state.shader_stages[stage];
     const GPUVAddr ssbo_addr = cbufs.const_buffers[cbuf_index].address + cbuf_offset;
@@ -472,6 +470,12 @@ void BufferCache<P>::BindGraphicsTextureBuffer(size_t stage, size_t tbo_index, G
 
 template <class P>
 void BufferCache<P>::UnbindComputeStorageBuffers() {
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers()) {
+            channel_state->total_compute_storage_buffers -=
+                static_cast<u32>(std::popcount(channel_state->enabled_compute_storage_buffers));
+        }
+    }
     channel_state->enabled_compute_storage_buffers = 0;
     channel_state->written_compute_storage_buffers = 0;
     channel_state->image_compute_texture_buffers = 0;
@@ -485,8 +489,26 @@ void BufferCache<P>::BindComputeStorageBuffer(size_t ssbo_index, u32 cbuf_index,
                   ssbo_index);
         return;
     }
+    const bool already_enabled =
+        ((channel_state->enabled_compute_storage_buffers >> ssbo_index) & 1U) != 0;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            const u32 max_bindings = runtime.GetMaxDynamicStorageBuffers();
+            if (channel_state->total_compute_storage_buffers >= max_bindings) {
+                LOG_WARNING(HW_GPU,
+                            "Skipping compute storage buffer {} due to driver limit {}",
+                            ssbo_index, max_bindings);
+                return;
+            }
+        }
+    }
     channel_state->enabled_compute_storage_buffers |= 1U << ssbo_index;
     channel_state->written_compute_storage_buffers |= (is_written ? 1U : 0U) << ssbo_index;
+    if constexpr (requires { runtime.ShouldLimitDynamicStorageBuffers(); }) {
+        if (runtime.ShouldLimitDynamicStorageBuffers() && !already_enabled) {
+            ++channel_state->total_compute_storage_buffers;
+        }
+    }
 
     const auto& launch_desc = kepler_compute->launch_description;
     if (((launch_desc.const_buffer_enable_mask >> cbuf_index) & 1) == 0) {
@@ -715,44 +737,6 @@ void BufferCache<P>::BindHostIndexBuffer() {
     const u32 offset = buffer.Offset(channel_state->index_buffer.device_addr);
     const u32 size = channel_state->index_buffer.size;
     const auto& draw_state = maxwell3d->draw_manager->GetDrawState();
-    if constexpr (!P::IS_OPENGL) {
-        const auto polygon_mode = VideoCore::EffectivePolygonMode(maxwell3d->regs);
-        const bool polygon_line =
-            draw_state.topology == Maxwell::PrimitiveTopology::Polygon &&
-            polygon_mode == Maxwell::PolygonMode::Line;
-        if (polygon_line && draw_state.index_buffer.count > 1) {
-            const u32 element_size = draw_state.index_buffer.FormatSizeInBytes();
-            const size_t src_bytes = static_cast<size_t>(draw_state.index_buffer.count) * element_size;
-            const size_t total_bytes = src_bytes + element_size;
-            auto staging = runtime.UploadStagingBuffer(total_bytes);
-            std::span<u8> dst_span{staging.mapped_span.data(), total_bytes};
-            std::span<const u8> src_span;
-            if (!draw_state.inline_index_draw_indexes.empty()) {
-                const u8* const src =
-                    draw_state.inline_index_draw_indexes.data() +
-                    static_cast<size_t>(draw_state.index_buffer.first) * element_size;
-                src_span = {src, src_bytes};
-            } else if (const u8* const cpu_base =
-                           device_memory.GetPointer<u8>(channel_state->index_buffer.device_addr)) {
-                const u8* const src = cpu_base +
-                                      static_cast<size_t>(draw_state.index_buffer.first) * element_size;
-                src_span = {src, src_bytes};
-            } else {
-                const DAddr src_addr =
-                    channel_state->index_buffer.device_addr +
-                    static_cast<DAddr>(draw_state.index_buffer.first) * element_size;
-                device_memory.ReadBlockUnsafe(src_addr, dst_span.data(), src_bytes);
-                src_span = {dst_span.data(), src_bytes};
-            }
-            Vulkan::LineLoop::CopyWithClosureRaw(dst_span, src_span, element_size);
-            buffer.MarkUsage(offset, size);
-            runtime.BindIndexBuffer(draw_state.topology, draw_state.index_buffer.format,
-                                    draw_state.index_buffer.first, draw_state.index_buffer.count + 1,
-                                    staging.buffer, static_cast<u32>(staging.offset),
-                                    static_cast<u32>(total_bytes));
-            return;
-        }
-    }
     if (!draw_state.inline_index_draw_indexes.empty()) [[unlikely]] {
         if constexpr (USE_MEMORY_MAPS_FOR_UPLOADS) {
             auto upload_staging = runtime.UploadStagingBuffer(size);
@@ -857,9 +841,23 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
     const u32 size = (std::min)(binding.size, (*channel_state->uniform_buffer_sizes)[stage][index]);
     Buffer& buffer = slot_buffers[binding.buffer_id];
     TouchBuffer(buffer, binding.buffer_id);
-    const bool use_fast_buffer = binding.buffer_id != NULL_BUFFER_ID &&
-                                 size <= channel_state->uniform_buffer_skip_cache_size &&
-                                 !memory_tracker.IsRegionGpuModified(device_addr, size);
+    const bool has_host_buffer = binding.buffer_id != NULL_BUFFER_ID;
+    const u32 offset = has_host_buffer ? buffer.Offset(device_addr) : 0;
+    const bool needs_alignment_stream = [&]() {
+        if constexpr (IS_OPENGL) {
+            return false;
+        } else {
+            if (!has_host_buffer) {
+                return false;
+            }
+            const u32 alignment = runtime.GetUniformBufferAlignment();
+            return alignment > 1 && (offset % alignment) != 0;
+        }
+    }();
+    const bool use_fast_buffer = needs_alignment_stream ||
+                                 (has_host_buffer &&
+                                  size <= channel_state->uniform_buffer_skip_cache_size &&
+                                  !memory_tracker.IsRegionGpuModified(device_addr, size));
     if (use_fast_buffer) {
         if constexpr (IS_OPENGL) {
             if (runtime.HasFastBufferSubData()) {
@@ -898,7 +896,6 @@ void BufferCache<P>::BindHostGraphicsUniformBuffer(size_t stage, u32 index, u32 
     if (!needs_bind) {
         return;
     }
-    const u32 offset = buffer.Offset(device_addr);
     if constexpr (IS_OPENGL) {
         // Mark the index as dirty if offset doesn't match
         const bool is_copy_bind = offset != 0 && !runtime.SupportsNonZeroUniformOffset();
@@ -1015,9 +1012,30 @@ void BufferCache<P>::BindHostComputeUniformBuffers() {
         TouchBuffer(buffer, binding.buffer_id);
         const u32 size =
             (std::min)(binding.size, (*channel_state->compute_uniform_buffer_sizes)[index]);
+        const bool has_host_buffer = binding.buffer_id != NULL_BUFFER_ID;
+        const u32 offset = has_host_buffer ? buffer.Offset(binding.device_addr) : 0;
+        const bool needs_alignment_stream = [&]() {
+            if constexpr (IS_OPENGL) {
+                return false;
+            } else {
+                if (!has_host_buffer) {
+                    return false;
+                }
+                const u32 alignment = runtime.GetUniformBufferAlignment();
+                return alignment > 1 && (offset % alignment) != 0;
+            }
+        }();
+        if constexpr (!IS_OPENGL) {
+            if (needs_alignment_stream) {
+                const std::span<u8> span =
+                    runtime.BindMappedUniformBuffer(0, binding_index, size);
+                device_memory.ReadBlockUnsafe(binding.device_addr, span.data(), size);
+                return;
+            }
+        }
+
         SynchronizeBuffer(buffer, binding.device_addr, size);
 
-        const u32 offset = buffer.Offset(binding.device_addr);
         buffer.MarkUsage(offset, size);
         if constexpr (NEEDS_BIND_UNIFORM_INDEX) {
             runtime.BindComputeUniformBuffer(binding_index, buffer, offset, size);
@@ -1769,21 +1787,26 @@ Binding BufferCache<P>::StorageBufferBinding(GPUVAddr ssbo_addr, u32 cbuf_index,
         return NULL_BINDING;
     }
 
+    // xbzk: New size logic. Fixes MCI.
+    // If ever the * comment below prove wrong, the 'if' block may be removed.
     const auto size = [&]() {
         const bool is_nvn_cbuf = cbuf_index == 0;
-        // The NVN driver buffer (index 0) is known to pack the SSBO address followed by its size.
         if (is_nvn_cbuf) {
-            const u32 ssbo_size = gpu_memory->Read<u32>(ssbo_addr + 8);
-            if (ssbo_size != 0) {
-                return ssbo_size;
+            // * The NVN driver buffer (index 0) is known to pack the SSBO address followed by its size.
+            const u64 next_qword = gpu_memory->Read<u64>(ssbo_addr + 8);
+            const u32 upper_32 = static_cast<u32>(next_qword >> 32);
+            // Hardware-based detection: GPU addresses have non-zero upper bits
+            if (upper_32 == 0) {
+                // This is a size field, not a GPU address
+                return static_cast<u32>(next_qword);  // Return lower_32
             }
         }
-        // Other titles (notably Doom Eternal) may use STG/LDG on buffer addresses in custom defined
-        // cbufs, which do not store the sizes adjacent to the addresses, so use the fully
-        // mapped buffer size for now.
+        // Fall through: either not NVN cbuf (Doom Eternal & +), or NVN but ssbo_addr+8 is a GPU address (MCI)
         const u32 memory_layout_size = static_cast<u32>(gpu_memory->GetMemoryLayoutSize(gpu_addr));
+        // Cap at 8MB to prevent allocator overflow from misinterpreted addresses
         return (std::min)(memory_layout_size, static_cast<u32>(8_MiB));
     }();
+
     // Alignment only applies to the offset of the buffer
     const u32 alignment = runtime.GetStorageBufferAlignment();
     const GPUVAddr aligned_gpu_addr = Common::AlignDown(gpu_addr, alignment);

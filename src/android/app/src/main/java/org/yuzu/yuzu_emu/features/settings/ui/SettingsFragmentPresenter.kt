@@ -10,6 +10,7 @@ import androidx.preference.PreferenceManager
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.YuzuApplication
+import org.yuzu.yuzu_emu.activities.EmulationActivity
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.features.input.model.AnalogDirection
 import org.yuzu.yuzu_emu.features.input.model.NativeAnalog
@@ -26,8 +27,10 @@ import org.yuzu.yuzu_emu.features.settings.model.Settings.MenuTag
 import org.yuzu.yuzu_emu.features.settings.model.ShortSetting
 import org.yuzu.yuzu_emu.features.settings.model.StringSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.*
+import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 import org.yuzu.yuzu_emu.utils.InputHandler
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
@@ -107,8 +110,9 @@ class SettingsFragmentPresenter(
             MenuTag.SECTION_INPUT_PLAYER_EIGHT -> addInputPlayer(sl, 7)
             MenuTag.SECTION_APP_SETTINGS -> addThemeSettings(sl)
             MenuTag.SECTION_DEBUG -> addDebugSettings(sl)
-            MenuTag.SECTION_EDEN_VEIL -> addEdenVeilSettings(sl)
+            MenuTag.SECTION_FREEDRENO -> addFreedrenoSettings(sl)
             MenuTag.SECTION_APPLETS -> addAppletSettings(sl)
+            MenuTag.SECTION_CUSTOM_PATHS -> addCustomPathsSettings(sl)
         }
         settingsList = sl
         adapter.submitList(settingsList) {
@@ -179,14 +183,16 @@ class SettingsFragmentPresenter(
                     menuKey = MenuTag.SECTION_DEBUG
                 )
             )
-            add(
-                SubmenuSetting(
-                    titleId = R.string.eden_veil,
-                    descriptionId = R.string.eden_veil_description,
-                    iconId = R.drawable.ic_eden_veil,
-                    menuKey = MenuTag.SECTION_EDEN_VEIL
+            if (GpuDriverHelper.isAdrenoGpu() && !NativeConfig.isPerGameConfigLoaded()) {
+                add(
+                    SubmenuSetting(
+                        titleId = R.string.gpu_driver_settings,
+                        descriptionId = R.string.freedreno_settings_title,
+                        iconId = R.drawable.ic_graphics,
+                        menuKey = MenuTag.SECTION_FREEDRENO
+                    )
                 )
-            )
+            }
             add(
                 SubmenuSetting(
                     titleId = R.string.applets_menu,
@@ -195,6 +201,16 @@ class SettingsFragmentPresenter(
                     menuKey = MenuTag.SECTION_APPLETS
                 )
             )
+            if (!NativeConfig.isPerGameConfigLoaded()) {
+                add(
+                    SubmenuSetting(
+                        titleId = R.string.preferences_custom_paths,
+                        descriptionId = R.string.preferences_custom_paths_description,
+                        iconId = R.drawable.ic_folder_open,
+                        menuKey = MenuTag.SECTION_CUSTOM_PATHS
+                    )
+                )
+            }
             add(
                 RunnableSetting(
                     titleId = R.string.reset_to_default,
@@ -217,30 +233,61 @@ class SettingsFragmentPresenter(
             add(BooleanSetting.USE_CUSTOM_RTC.key)
             add(LongSetting.CUSTOM_RTC.key)
 
+            add(HeaderSetting(R.string.cpu))
+            add(IntSetting.FAST_CPU_TIME.key)
+            add(BooleanSetting.USE_LRU_CACHE.key)
+            add(BooleanSetting.CORE_SYNC_CORE_SPEED.key)
+
+            add(IntSetting.MEMORY_LAYOUT.key)
+            add(BooleanSetting.USE_CUSTOM_CPU_TICKS.key)
+            add(IntSetting.CPU_TICKS.key)
+
             add(HeaderSetting(R.string.network))
             add(StringSetting.WEB_TOKEN.key)
             add(StringSetting.WEB_USERNAME.key)
         }
     }
 
+    // TODO(crueter): sub-submenus?
     private fun addGraphicsSettings(sl: ArrayList<SettingsItem>) {
         sl.apply {
-            add(HeaderSetting(R.string.backend))
+            // add(IntSetting.RENDERER_NVDEC_EMULATION.key)
 
-            add(IntSetting.RENDERER_ACCURACY.key)
             add(IntSetting.RENDERER_RESOLUTION.key)
-            add(BooleanSetting.RENDERER_USE_DISK_SHADER_CACHE.key)
-            add(BooleanSetting.RENDERER_FORCE_MAX_CLOCK.key)
-            add(BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS.key)
-            add(BooleanSetting.RENDERER_REACTIVE_FLUSHING.key)
-
-            add(HeaderSetting(R.string.processing))
-
             add(IntSetting.RENDERER_VSYNC.key)
-            add(IntSetting.RENDERER_ANTI_ALIASING.key)
-            add(IntSetting.MAX_ANISOTROPY.key)
+            add(IntSetting.RENDERER_SHADER_BACKEND.key)
             add(IntSetting.RENDERER_SCALING_FILTER.key)
             add(IntSetting.FSR_SHARPENING_SLIDER.key)
+            add(IntSetting.RENDERER_ANTI_ALIASING.key)
+            add(IntSetting.RENDERER_OPTIMIZE_SPIRV_OUTPUT.key)
+
+            add(HeaderSetting(R.string.advanced))
+
+            add(IntSetting.RENDERER_ACCURACY.key)
+            add(IntSetting.DMA_ACCURACY.key)
+            add(IntSetting.MAX_ANISOTROPY.key)
+            add(IntSetting.RENDERER_VRAM_USAGE_MODE.key)
+            add(IntSetting.RENDERER_ASTC_DECODE_METHOD.key)
+            add(IntSetting.RENDERER_ASTC_RECOMPRESSION.key)
+
+            add(BooleanSetting.SYNC_MEMORY_OPERATIONS.key)
+            add(BooleanSetting.RENDERER_USE_DISK_SHADER_CACHE.key)
+            add(BooleanSetting.RENDERER_FORCE_MAX_CLOCK.key)
+            add(BooleanSetting.RENDERER_REACTIVE_FLUSHING.key)
+
+            add(HeaderSetting(R.string.hacks))
+
+            add(IntSetting.FAST_GPU_TIME.key)
+            add(BooleanSetting.SKIP_CPU_INNER_INVALIDATION.key)
+            add(BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS.key)
+
+            add(HeaderSetting(R.string.extensions))
+
+            add(IntSetting.RENDERER_DYNA_STATE.key)
+            add(BooleanSetting.RENDERER_VERTEX_INPUT_DYNAMIC_STATE.key)
+            add(BooleanSetting.RENDERER_PROVOKING_VERTEX.key)
+            add(BooleanSetting.RENDERER_DESCRIPTOR_INDEXING.key)
+            add(IntSetting.RENDERER_SAMPLE_SHADING.key)
 
             add(HeaderSetting(R.string.display))
 
@@ -272,6 +319,19 @@ class SettingsFragmentPresenter(
 
     private fun addInputOverlaySettings(sl: ArrayList<SettingsItem>) {
         sl.apply {
+            add(BooleanSetting.SHOW_INPUT_OVERLAY.key)
+            add(BooleanSetting.OVERLAY_SNAP_TO_GRID.key)
+            add(IntSetting.OVERLAY_GRID_SIZE.key)
+            add(
+                LaunchableSetting(
+                    titleId = R.string.edit_overlay_layout,
+                    descriptionId = R.string.edit_overlay_layout_description,
+                    launchIntent = { context ->
+                        EmulationActivity.launchForOverlayEdit(context)
+                    }
+                )
+            )
+            add(HeaderSetting(R.string.input_overlay_behavior))
             add(BooleanSetting.ENABLE_INPUT_OVERLAY_AUTO_HIDE.key)
             add(IntSetting.INPUT_OVERLAY_AUTO_HIDE.key)
             add(BooleanSetting.HIDE_OVERLAY_ON_CONTROLLER_INPUT.key)
@@ -450,40 +510,9 @@ class SettingsFragmentPresenter(
         }
     }
 
-    private fun addEdenVeilSettings(sl: ArrayList<SettingsItem>) {
-        sl.apply {
-            add(HeaderSetting(R.string.veil_extensions))
-            add(ByteSetting.RENDERER_DYNA_STATE.key)
-            add(BooleanSetting.RENDERER_VERTEX_INPUT_DYNAMIC_STATE.key)
-            add(BooleanSetting.RENDERER_PROVOKING_VERTEX.key)
-            add(BooleanSetting.RENDERER_DESCRIPTOR_INDEXING.key)
-            add(BooleanSetting.RENDERER_SAMPLE_SHADING.key)
-            add(IntSetting.RENDERER_SAMPLE_SHADING_FRACTION.key)
-
-            add(HeaderSetting(R.string.veil_renderer))
-            add(IntSetting.DMA_ACCURACY.key)
-            add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
-            add(BooleanSetting.RENDERER_FAST_GPU.key)
-            add(IntSetting.FAST_GPU_TIME.key)
-            add(IntSetting.RENDERER_SHADER_BACKEND.key)
-            add(IntSetting.RENDERER_NVDEC_EMULATION.key)
-            add(IntSetting.RENDERER_ASTC_DECODE_METHOD.key)
-            add(IntSetting.RENDERER_ASTC_RECOMPRESSION.key)
-            add(IntSetting.RENDERER_VRAM_USAGE_MODE.key)
-            add(IntSetting.RENDERER_OPTIMIZE_SPIRV_OUTPUT.key)
-
-            add(HeaderSetting(R.string.veil_misc))
-            add(BooleanSetting.USE_FAST_CPU_TIME.key)
-            add(IntSetting.FAST_CPU_TIME.key)
-            add(BooleanSetting.USE_CUSTOM_CPU_TICKS.key)
-            add(IntSetting.CPU_TICKS.key)
-            add(BooleanSetting.SKIP_CPU_INNER_INVALIDATION.key)
-            add(BooleanSetting.CPUOPT_UNSAFE_HOST_MMU.key)
-            add(BooleanSetting.USE_LRU_CACHE.key)
-            add(BooleanSetting.CORE_SYNC_CORE_SPEED.key)
-            add(BooleanSetting.SYNC_MEMORY_OPERATIONS.key)
-            add(IntSetting.MEMORY_LAYOUT.key)
-        }
+    private fun addFreedrenoSettings(sl: ArrayList<SettingsItem>) {
+        // No additional settings needed here - the SubmenuSetting handles navigation
+        // This method is kept for consistency with other menu sections
     }
 
     private fun addAppletSettings(sl: ArrayList<SettingsItem>) {
@@ -1113,14 +1142,16 @@ class SettingsFragmentPresenter(
                 )
             )
 
-            add(
-                SingleChoiceSetting(
-                    staticThemeColor,
-                    titleId = R.string.static_theme_color,
-                    choicesId = R.array.staticThemeNames,
-                    valuesId = R.array.staticThemeValues
+            if (IntSetting.THEME.getInt() != 1) {
+                add(
+                    SingleChoiceSetting(
+                        staticThemeColor,
+                        titleId = R.string.static_theme_color,
+                        choicesId = R.array.staticThemeNames,
+                        valuesId = R.array.staticThemeValues
+                    )
                 )
-            )
+            }
 
             val blackBackgrounds: AbstractBooleanSetting = object : AbstractBooleanSetting {
                 override fun getBoolean(needsGlobal: Boolean): Boolean =
@@ -1159,18 +1190,65 @@ class SettingsFragmentPresenter(
     private fun addDebugSettings(sl: ArrayList<SettingsItem>) {
         sl.apply {
             add(HeaderSetting(R.string.gpu))
+
             add(IntSetting.RENDERER_BACKEND.key)
             add(BooleanSetting.RENDERER_DEBUG.key)
+            add(BooleanSetting.RENDERER_PATCH_OLD_QCOM_DRIVERS.key)
+            add(BooleanSetting.BUFFER_REORDER_DISABLE.key)
 
             add(HeaderSetting(R.string.cpu))
+
             add(IntSetting.CPU_BACKEND.key)
             add(IntSetting.CPU_ACCURACY.key)
             add(BooleanSetting.USE_AUTO_STUB.key)
             add(SettingsItem.FASTMEM_COMBINED)
+            add(BooleanSetting.CPUOPT_UNSAFE_HOST_MMU.key)
+
             add(HeaderSetting(R.string.log))
+
             add(BooleanSetting.DEBUG_FLUSH_BY_LINE.key)
+
             add(HeaderSetting(R.string.general))
+
             add(IntSetting.DEBUG_KNOBS.key)
+        }
+    }
+
+    private fun addCustomPathsSettings(sl: ArrayList<SettingsItem>) {
+        sl.apply {
+            add(
+                PathSetting(
+                    titleId = R.string.custom_save_directory,
+                    descriptionId = R.string.custom_save_directory_description,
+                    iconId = R.drawable.ic_save,
+                    pathType = PathSetting.PathType.SAVE_DATA,
+                    defaultPathGetter = { NativeConfig.getDefaultSaveDir() },
+                    currentPathGetter = { NativeConfig.getSaveDir() },
+                    pathSetter = { path -> NativeConfig.setSaveDir(path) }
+                )
+            )
+            add(
+                PathSetting(
+                    titleId = R.string.custom_nand_directory,
+                    descriptionId = R.string.custom_nand_directory_description,
+                    iconId = R.drawable.ic_folder_open,
+                    pathType = PathSetting.PathType.NAND,
+                    defaultPathGetter = { DirectoryInitialization.userDirectory + "/nand" },
+                    currentPathGetter = { NativeConfig.getNandDir() },
+                    pathSetter = { path -> NativeConfig.setNandDir(path) }
+                )
+            )
+            add(
+                PathSetting(
+                    titleId = R.string.custom_sdmc_directory,
+                    descriptionId = R.string.custom_sdmc_directory_description,
+                    iconId = R.drawable.ic_folder_open,
+                    pathType = PathSetting.PathType.SDMC,
+                    defaultPathGetter = { DirectoryInitialization.userDirectory + "/sdmc" },
+                    currentPathGetter = { NativeConfig.getSdmcDir() },
+                    pathSetter = { path -> NativeConfig.setSdmcDir(path) }
+                )
+            )
         }
     }
 }

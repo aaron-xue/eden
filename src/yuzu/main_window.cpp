@@ -1421,7 +1421,7 @@ void MainWindow::InitializeHotkeys() {
     connect_shortcut(QStringLiteral("Change Adapting Filter"),
                      &MainWindow::OnToggleAdaptingFilter);
     connect_shortcut(QStringLiteral("Change Docked Mode"), &MainWindow::OnToggleDockedMode);
-    connect_shortcut(QStringLiteral("Change GPU Accuracy"), &MainWindow::OnToggleGpuAccuracy);
+    connect_shortcut(QStringLiteral("Change GPU Mode"), &MainWindow::OnToggleGpuAccuracy);
     connect_shortcut(QStringLiteral("Audio Mute/Unmute"), &MainWindow::OnMute);
     connect_shortcut(QStringLiteral("Audio Volume Down"), &MainWindow::OnDecreaseVolume);
     connect_shortcut(QStringLiteral("Audio Volume Up"), &MainWindow::OnIncreaseVolume);
@@ -1495,7 +1495,7 @@ void MainWindow::OnAppFocusStateChanged(Qt::ApplicationState state) {
             (state & (Qt::ApplicationHidden | Qt::ApplicationInactive))) {
             auto_paused = true;
             OnPauseGame();
-        } else if (!emu_thread->IsRunning() && auto_paused && state == Qt::ApplicationActive) {
+        } else if (!emu_thread->IsRunning() && auto_paused && (state & Qt::ApplicationActive)) {
             auto_paused = false;
             OnStartGame();
         }
@@ -1505,7 +1505,7 @@ void MainWindow::OnAppFocusStateChanged(Qt::ApplicationState state) {
             (state & (Qt::ApplicationHidden | Qt::ApplicationInactive))) {
             Settings::values.audio_muted = true;
             auto_muted = true;
-        } else if (auto_muted && state == Qt::ApplicationActive) {
+        } else if (auto_muted && (state & Qt::ApplicationActive)) {
             Settings::values.audio_muted = false;
             auto_muted = false;
         }
@@ -2331,9 +2331,9 @@ void MainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target,
     switch (target) {
     case GameListOpenTarget::SaveData: {
         open_target = tr("Save Data");
-        const auto nand_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::NANDDir);
-        auto vfs_nand_dir =
-            QtCommon::vfs->OpenDirectory(Common::FS::PathToUTF8String(nand_dir), FileSys::OpenMode::Read);
+        const auto save_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::SaveDir);
+        auto vfs_save_dir =
+            QtCommon::vfs->OpenDirectory(Common::FS::PathToUTF8String(save_dir), FileSys::OpenMode::Read);
 
         if (has_user_save) {
             // User save data
@@ -2341,17 +2341,17 @@ void MainWindow::OnGameListOpenFolder(u64 program_id, GameListOpenTarget target,
             assert(user_id);
 
             const auto user_save_data_path = FileSys::SaveDataFactory::GetFullPath(
-                {}, vfs_nand_dir, FileSys::SaveDataSpaceId::User, FileSys::SaveDataType::Account,
+                {}, vfs_save_dir, FileSys::SaveDataSpaceId::User, FileSys::SaveDataType::Account,
                 program_id, user_id->AsU128(), 0);
 
-            path = Common::FS::ConcatPathSafe(nand_dir, user_save_data_path);
+            path = Common::FS::ConcatPathSafe(save_dir, user_save_data_path);
         } else {
             // Device save data
             const auto device_save_data_path = FileSys::SaveDataFactory::GetFullPath(
-                {}, vfs_nand_dir, FileSys::SaveDataSpaceId::User, FileSys::SaveDataType::Account,
+                {}, vfs_save_dir, FileSys::SaveDataSpaceId::User, FileSys::SaveDataType::Account,
                 program_id, {}, 0);
 
-            path = Common::FS::ConcatPathSafe(nand_dir, device_save_data_path);
+            path = Common::FS::ConcatPathSafe(save_dir, device_save_data_path);
         }
 
         if (!Common::FS::CreateDirs(path)) {

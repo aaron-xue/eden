@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <iostream>
 #include <span>
-#include <string_view>
 
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
@@ -23,7 +22,6 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
-#include "video_core/polygon_mode_utils.h"
 #include "video_core/shader_notify.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "video_core/vulkan_common/vulkan_device.h"
@@ -265,6 +263,7 @@ GraphicsPipeline::GraphicsPipeline(
         std::ranges::copy(info->constant_buffer_used_sizes, uniform_buffer_sizes[stage].begin());
         num_textures += Shader::NumDescriptors(info->texture_descriptors);
     }
+    fragment_has_color0_output = stage_infos[NUM_STAGES - 1].stores_frag_color[0];
     auto func{[this, shader_notify, &render_pass_cache, &descriptor_pool, pipeline_statistics] {
         DescriptorLayoutBuilder builder{MakeBuilder(device, stage_infos)};
         uses_push_descriptor = builder.CanUsePushDescriptor();
@@ -616,10 +615,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         vertex_input_ci.pNext = &input_divisor_ci;
     }
     const bool has_tess_stages = spv_modules[1] || spv_modules[2];
-    const auto polygon_mode =
-        FixedPipelineState::UnpackPolygonMode(key.state.polygon_mode.Value());
-    auto input_assembly_topology =
-        MaxwellToVK::PrimitiveTopology(device, key.state.topology, polygon_mode);
+    auto input_assembly_topology = MaxwellToVK::PrimitiveTopology(device, key.state.topology);
     if (input_assembly_topology == VK_PRIMITIVE_TOPOLOGY_PATCH_LIST) {
         if (!has_tess_stages) {
             LOG_WARNING(Render_Vulkan, "Patch topology used without tessellation, using points");
@@ -633,33 +629,6 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
                         "Patch topology not used with tessellation, using patch list");
             input_assembly_topology = VK_PRIMITIVE_TOPOLOGY_PATCH_LIST;
         }
-    }
-    if (key.state.topology == Maxwell::PrimitiveTopology::Polygon) {
-        const auto polygon_mode_name = [polygon_mode]() -> std::string_view {
-            switch (polygon_mode) {
-            case Maxwell::PolygonMode::Fill:
-                return "Fill";
-            case Maxwell::PolygonMode::Line:
-                return "Line";
-            case Maxwell::PolygonMode::Point:
-                return "Point";
-            }
-            return "Unknown";
-        }();
-        const auto vk_topology_name = [input_assembly_topology]() -> std::string_view {
-            switch (input_assembly_topology) {
-            case VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN:
-                return "TriangleFan";
-            case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:
-                return "LineStrip";
-            case VK_PRIMITIVE_TOPOLOGY_POINT_LIST:
-                return "PointList";
-            default:
-                return "Unexpected";
-            }
-        }();
-        LOG_DEBUG(Render_Vulkan, "Polygon primitive in {} mode mapped to {}", polygon_mode_name,
-                  vk_topology_name);
     }
     const VkPipelineInputAssemblyStateCreateInfo input_assembly_ci{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
@@ -734,13 +703,18 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .lineWidth = 1.0f,
         // TODO(alekpop): Transfer from regs
     };
+    const bool smooth_lines_supported =
+        device.IsExtLineRasterizationSupported() && device.SupportsSmoothLines();
+    const bool stippled_lines_supported =
+        device.IsExtLineRasterizationSupported() && device.SupportsStippledRectangularLines();
     VkPipelineRasterizationLineStateCreateInfoEXT line_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_LINE_STATE_CREATE_INFO_EXT,
         .pNext = nullptr,
-        .lineRasterizationMode = key.state.smooth_lines != 0
+        .lineRasterizationMode = key.state.smooth_lines != 0 && smooth_lines_supported
                                      ? VK_LINE_RASTERIZATION_MODE_RECTANGULAR_SMOOTH_EXT
                                      : VK_LINE_RASTERIZATION_MODE_RECTANGULAR_EXT,
-        .stippledLineEnable = dynamic.line_stipple_enable ? VK_TRUE : VK_FALSE,
+        .stippledLineEnable =
+            (dynamic.line_stipple_enable && stippled_lines_supported) ? VK_TRUE : VK_FALSE,
         .lineStippleFactor = key.state.line_stipple_factor,
         .lineStipplePattern = static_cast<uint16_t>(key.state.line_stipple_pattern),
     };
@@ -771,16 +745,20 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         provoking_vertex.pNext = std::exchange(rasterization_ci.pNext, &provoking_vertex);
     }
 
+    const bool supports_alpha_output = fragment_has_color0_output;
+    const bool alpha_to_one_supported = device.SupportsAlphaToOne();
     const VkPipelineMultisampleStateCreateInfo multisample_ci{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
         .rasterizationSamples = MaxwellToVK::MsaaMode(key.state.msaa_mode),
-        .sampleShadingEnable = Settings::values.sample_shading.GetValue() ? VK_TRUE : VK_FALSE,
-        .minSampleShading = static_cast<float>(Settings::values.sample_shading_fraction.GetValue()) / 100.0f,
+        .sampleShadingEnable = Settings::values.sample_shading.GetValue() > 0 ? VK_TRUE : VK_FALSE,
+        .minSampleShading = f32(Settings::values.sample_shading.GetValue()) / 100.0f,
         .pSampleMask = nullptr,
-        .alphaToCoverageEnable = key.state.alpha_to_coverage_enabled != 0 ? VK_TRUE : VK_FALSE,
-        .alphaToOneEnable = key.state.alpha_to_one_enabled != 0 ? VK_TRUE : VK_FALSE,
+        .alphaToCoverageEnable =
+            supports_alpha_output && key.state.alpha_to_coverage_enabled != 0 ? VK_TRUE : VK_FALSE,
+        .alphaToOneEnable = supports_alpha_output && alpha_to_one_supported &&
+                           key.state.alpha_to_one_enabled != 0 ? VK_TRUE : VK_FALSE,
     };
     const VkPipelineDepthStencilStateCreateInfo depth_stencil_ci{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
@@ -795,8 +773,8 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         .stencilTestEnable = dynamic.stencil_enable,
         .front = GetStencilFaceState(dynamic.front),
         .back = GetStencilFaceState(dynamic.back),
-        .minDepthBounds = static_cast<f32>(key.state.depth_bounds_min),
-        .maxDepthBounds = static_cast<f32>(key.state.depth_bounds_max),
+        .minDepthBounds = f32(key.state.depth_bounds_min),
+        .maxDepthBounds = f32(key.state.depth_bounds_max),
     };
     if (dynamic.depth_bounds_enable && !device.IsDepthBoundsSupported()) {
         LOG_WARNING(Render_Vulkan, "Depth bounds is enabled but not supported");
@@ -845,7 +823,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
         VK_DYNAMIC_STATE_LINE_WIDTH,
     };
     if (key.state.extended_dynamic_state) {
-        std::vector<VkDynamicState> extended{
+        static constexpr std::array extended{
             VK_DYNAMIC_STATE_CULL_MODE_EXT,
             VK_DYNAMIC_STATE_FRONT_FACE_EXT,
             VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE_EXT,
@@ -855,51 +833,68 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
             VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE_EXT,
             VK_DYNAMIC_STATE_STENCIL_OP_EXT,
         };
-        if (!device.IsExtVertexInputDynamicStateSupported()) {
-            extended.push_back(VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE_EXT);
-        }
-        if (key.state.dynamic_vertex_input) {
-            dynamic_states.push_back(VK_DYNAMIC_STATE_VERTEX_INPUT_EXT);
-        }
         dynamic_states.insert(dynamic_states.end(), extended.begin(), extended.end());
-        if (key.state.extended_dynamic_state_2) {
-            static constexpr std::array extended2{
-                VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE_EXT,
-                VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE_EXT,
-                VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE_EXT,
-            };
-            dynamic_states.insert(dynamic_states.end(), extended2.begin(), extended2.end());
+
+        // VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE_EXT is part of EDS1
+        // Only use it if VIDS is not active (VIDS replaces it with full vertex input control)
+        if (!key.state.dynamic_vertex_input) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_VERTEX_INPUT_BINDING_STRIDE_EXT);
         }
-        if (key.state.extended_dynamic_state_2_extra) {
-            dynamic_states.push_back(VK_DYNAMIC_STATE_LOGIC_OP_EXT);
+    }
+
+    // VK_DYNAMIC_STATE_VERTEX_INPUT_EXT (VIDS) - Independent from EDS
+    // Provides full dynamic vertex input control, replaces VERTEX_INPUT_BINDING_STRIDE
+    if (key.state.dynamic_vertex_input) {
+        dynamic_states.push_back(VK_DYNAMIC_STATE_VERTEX_INPUT_EXT);
+    }
+
+    // EDS2 - Core (3 states)
+    if (key.state.extended_dynamic_state_2) {
+        static constexpr std::array extended2{
+            VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE_EXT,
+            VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE_EXT,
+            VK_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE_EXT,
+        };
+        dynamic_states.insert(dynamic_states.end(), extended2.begin(), extended2.end());
+    }
+
+    // EDS2 - LogicOp (granular)
+    if (key.state.extended_dynamic_state_2_logic_op) {
+        dynamic_states.push_back(VK_DYNAMIC_STATE_LOGIC_OP_EXT);
+    }
+
+    // EDS3 - Blending (composite: 3 states)
+    if (key.state.extended_dynamic_state_3_blend) {
+        static constexpr std::array extended3{
+            VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
+            VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT,
+            VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT,
+        };
+        dynamic_states.insert(dynamic_states.end(), extended3.begin(), extended3.end());
+    }
+
+    // EDS3 - Enables (composite: per-feature)
+    if (key.state.extended_dynamic_state_3_enables) {
+        if (device.SupportsDynamicState3DepthClampEnable()) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT);
         }
-        if (key.state.extended_dynamic_state_3_blend) {
-            static constexpr std::array extended3{
-                VK_DYNAMIC_STATE_COLOR_BLEND_ENABLE_EXT,
-                VK_DYNAMIC_STATE_COLOR_BLEND_EQUATION_EXT,
-                VK_DYNAMIC_STATE_COLOR_WRITE_MASK_EXT,
-
-                // VK_DYNAMIC_STATE_COLOR_BLEND_ADVANCED_EXT,
-            };
-            dynamic_states.insert(dynamic_states.end(), extended3.begin(), extended3.end());
+        if (device.SupportsDynamicState3LogicOpEnable()) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_LOGIC_OP_ENABLE_EXT);
         }
-        if (key.state.extended_dynamic_state_3_enables) {
-            static constexpr std::array extended3{
-                VK_DYNAMIC_STATE_DEPTH_CLAMP_ENABLE_EXT,
-                VK_DYNAMIC_STATE_LOGIC_OP_ENABLE_EXT,
-
-                // additional state3 extensions
-                VK_DYNAMIC_STATE_LINE_RASTERIZATION_MODE_EXT,
-
-                VK_DYNAMIC_STATE_CONSERVATIVE_RASTERIZATION_MODE_EXT,
-
-                VK_DYNAMIC_STATE_LINE_STIPPLE_ENABLE_EXT,
-                VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT,
-                VK_DYNAMIC_STATE_ALPHA_TO_ONE_ENABLE_EXT,
-                VK_DYNAMIC_STATE_DEPTH_CLIP_ENABLE_EXT,
-                VK_DYNAMIC_STATE_PROVOKING_VERTEX_MODE_EXT,
-            };
-            dynamic_states.insert(dynamic_states.end(), extended3.begin(), extended3.end());
+        if (device.SupportsDynamicState3LineRasterizationMode()) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_LINE_RASTERIZATION_MODE_EXT);
+        }
+        if (device.SupportsDynamicState3ConservativeRasterizationMode()) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_CONSERVATIVE_RASTERIZATION_MODE_EXT);
+        }
+        if (device.SupportsDynamicState3LineStippleEnable()) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_LINE_STIPPLE_ENABLE_EXT);
+        }
+        if (device.SupportsDynamicState3AlphaToCoverageEnable()) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_ALPHA_TO_COVERAGE_ENABLE_EXT);
+        }
+        if (device.SupportsDynamicState3AlphaToOneEnable()) {
+            dynamic_states.push_back(VK_DYNAMIC_STATE_ALPHA_TO_ONE_ENABLE_EXT);
         }
     }
 

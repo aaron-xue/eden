@@ -2,7 +2,14 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 cmake_minimum_required(VERSION 3.12)
-project(dynarmic LANGUAGES C CXX ASM VERSION 6.7.0)
+
+set(dynarmic_VERSION_MAJOR 7)
+set(dynarmic_VERSION_MINOR 0)
+set(dynarmic_VERSION_PATCH 0)
+
+set(dynarmic_VERSION ${dynarmic_VERSION_MAJOR}.${dynarmic_VERSION_MINOR}.${dynarmic_VERSION_PATCH})
+
+project(dynarmic LANGUAGES C CXX ASM VERSION ${dynarmic_VERSION})
 
 # Determine if we're built as a subproject (using add_subdirectory)
 # or if this is the master project.
@@ -25,7 +32,7 @@ else()
 endif()
 option(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT "Enables support for systems that require W^X" ${REQUIRE_WX})
 
-option(DYNARMIC_IGNORE_ASSERTS "Ignore asserts" OFF)
+option(DYNARMIC_IGNORE_ASSERTS "Ignore asserts" ON)
 option(DYNARMIC_TESTS_USE_UNICORN "Enable fuzzing tests against unicorn" OFF)
 CMAKE_DEPENDENT_OPTION(DYNARMIC_USE_LLVM "Support disassembly of jitted x86_64 code using LLVM" OFF "NOT YUZU_DISABLE_LLVM" OFF)
 
@@ -46,7 +53,7 @@ if ("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
 endif()
 
 # Add the module directory to the list of paths
-list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/CMakeModules")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMakeModules")
 
 # Compiler flags
 if (MSVC)
