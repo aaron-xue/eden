@@ -55,7 +55,7 @@ using VideoCommon::FileEnvironment;
 using VideoCommon::GenericEnvironment;
 using VideoCommon::GraphicsEnvironment;
 
-constexpr u32 CACHE_VERSION = 14;
+constexpr u32 CACHE_VERSION = 15;
 constexpr std::array<char, 8> VULKAN_CACHE_MAGIC_NUMBER{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
 
 template <typename Container>
@@ -146,7 +146,8 @@ Shader::AttributeType AttributeType(const FixedPipelineState& state, size_t inde
 Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> programs,
                                     const GraphicsPipelineCacheKey& key,
                                     const Shader::IR::Program& program,
-                                    const Shader::IR::Program* previous_program) {
+                                    const Shader::IR::Program* previous_program,
+                                    const Vulkan::Device& device) {
     Shader::RuntimeInfo info;
     if (previous_program) {
         info.previous_stage_stores = previous_program->info.stores;
@@ -168,10 +169,14 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
                 info.fixed_state_point_size = point_size;
             }
             if (key.state.xfb_enabled) {
-                auto [varyings, count] =
-                    VideoCommon::MakeTransformFeedbackVaryings(key.state.xfb_state);
-                info.xfb_varyings = varyings;
-                info.xfb_count = count;
+                if (device.IsExtTransformFeedbackSupported()) {
+                    auto [varyings, count] =
+                        VideoCommon::MakeTransformFeedbackVaryings(key.state.xfb_state);
+                    info.xfb_varyings = varyings;
+                    info.xfb_count = count;
+                } else {
+                    LOG_WARNING(Render_Vulkan, "XFB requested in pipeline key but device lacks VK_EXT_transform_feedback; ignoring XFB decorations");
+                }
             }
             info.convert_depth_mode = gl_ndc;
         }
@@ -218,10 +223,14 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
             info.fixed_state_point_size = point_size;
         }
         if (key.state.xfb_enabled != 0) {
-            auto [varyings, count] =
-                VideoCommon::MakeTransformFeedbackVaryings(key.state.xfb_state);
-            info.xfb_varyings = varyings;
-            info.xfb_count = count;
+            if (device.IsExtTransformFeedbackSupported()) {
+                auto [varyings, count] =
+                    VideoCommon::MakeTransformFeedbackVaryings(key.state.xfb_state);
+                info.xfb_varyings = varyings;
+                info.xfb_count = count;
+            } else {
+                LOG_WARNING(Render_Vulkan, "XFB requested in pipeline key but device lacks VK_EXT_transform_feedback; ignoring XFB decorations");
+            }
         }
         info.convert_depth_mode = gl_ndc;
         break;
@@ -269,8 +278,9 @@ size_t GetTotalPipelineWorkers() {
     const size_t max_core_threads =
         std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL) - 1ULL;
 #ifdef ANDROID
-    // Leave at least a few cores free in android
-    constexpr size_t free_cores = 3ULL;
+    // Leave at least one core free on Android. Previously we reserved two, but
+    // shipping builds benefit from one extra compilation worker.
+    constexpr size_t free_cores = 1ULL;
     if (max_core_threads <= free_cores) {
         return 1ULL;
     }
@@ -404,14 +414,35 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                     device.GetMaxVertexInputBindings(), Maxwell::NumVertexArrays);
     }
 
-    dynamic_features = DynamicFeatures{
-        .has_extended_dynamic_state = device.IsExtExtendedDynamicStateSupported(),
-        .has_extended_dynamic_state_2 = device.IsExtExtendedDynamicState2Supported(),
-        .has_extended_dynamic_state_2_extra = device.IsExtExtendedDynamicState2ExtrasSupported(),
-        .has_extended_dynamic_state_3_blend = device.IsExtExtendedDynamicState3BlendingSupported(),
-        .has_extended_dynamic_state_3_enables = device.IsExtExtendedDynamicState3EnablesSupported(),
-        .has_dynamic_vertex_input = device.IsExtVertexInputDynamicStateSupported(),
-    };
+    LOG_INFO(Render_Vulkan, "DynamicState setting value: {}", u32(Settings::values.dyna_state.GetValue()));
+
+    dynamic_features = {};
+
+    // User granularity enforced in vulkan_device.cpp switch statement:
+    //   Level 0: Core Dynamic States only
+    //   Level 1: Core + EDS1
+    //   Level 2: Core + EDS1 + EDS2 (accumulative)
+    //   Level 3: Core + EDS1 + EDS2 + EDS3 (accumulative)
+    // Here we only verify if extensions were successfully loaded by the device
+
+    dynamic_features.has_extended_dynamic_state =
+        device.IsExtExtendedDynamicStateSupported();
+
+    dynamic_features.has_extended_dynamic_state_2 =
+        device.IsExtExtendedDynamicState2Supported();
+    dynamic_features.has_extended_dynamic_state_2_logic_op =
+        device.IsExtExtendedDynamicState2ExtrasSupported();
+    dynamic_features.has_extended_dynamic_state_2_patch_control_points = false;
+
+    dynamic_features.has_extended_dynamic_state_3_blend =
+        device.IsExtExtendedDynamicState3BlendingSupported();
+    dynamic_features.has_extended_dynamic_state_3_enables =
+        device.IsExtExtendedDynamicState3EnablesSupported();
+
+    // VIDS: Independent toggle (not affected by dyna_state levels)
+    dynamic_features.has_dynamic_vertex_input =
+        device.IsExtVertexInputDynamicStateSupported() &&
+        Settings::values.vertex_input_dynamic_state.GetValue();
 }
 
 PipelineCache::~PipelineCache() {
@@ -516,8 +547,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
                 dynamic_features.has_extended_dynamic_state ||
             (key.state.extended_dynamic_state_2 != 0) !=
                 dynamic_features.has_extended_dynamic_state_2 ||
-            (key.state.extended_dynamic_state_2_extra != 0) !=
-                dynamic_features.has_extended_dynamic_state_2_extra ||
+            (key.state.extended_dynamic_state_2_logic_op != 0) !=
+                dynamic_features.has_extended_dynamic_state_2_logic_op ||
             (key.state.extended_dynamic_state_3_blend != 0) !=
                 dynamic_features.has_extended_dynamic_state_3_blend ||
             (key.state.extended_dynamic_state_3_enables != 0) !=
@@ -671,7 +702,7 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         const size_t stage_index{index - 1};
         infos[stage_index] = &program.info;
 
-        const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage)};
+        const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage, device)};
         ConvertLegacyToGeneric(program, runtime_info);
         const std::vector<u32> code{EmitSPIRV(profile, runtime_info, program, binding, this->optimize_spirv_output)};
         device.SaveShader(code);
@@ -767,6 +798,19 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
     }
 
     auto program{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
+    const VkDriverIdKHR driver_id = device.GetDriverID();
+    const bool needs_shared_mem_clamp =
+        driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
+        driver_id == VK_DRIVER_ID_ARM_PROPRIETARY;
+    const u32 max_shared_memory = device.GetMaxComputeSharedMemorySize();
+    if (needs_shared_mem_clamp && program.shared_memory_size > max_shared_memory) {
+        LOG_WARNING(Render_Vulkan,
+                    "Compute shader 0x{:016x} requests {}KB shared memory but device max is {}KB - clamping",
+                    key.unique_hash,
+                    program.shared_memory_size / 1024,
+                    max_shared_memory / 1024);
+        program.shared_memory_size = max_shared_memory;
+    }
     const std::vector<u32> code{EmitSPIRV(profile, program, this->optimize_spirv_output)};
     device.SaveShader(code);
     vk::ShaderModule spv_module{BuildShader(device, code)};

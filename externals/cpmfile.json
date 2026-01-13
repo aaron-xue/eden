@@ -71,9 +71,9 @@
         "hash": "9697e80a7d5d9bcb3ce51051a9a24962fb90ca79d215f1f03ae6b58da8ba13a63b5dda1b4dde3d26ac6445029696b8ef2883f4e5a777b342bba01283ed293856"
     },
     "libadrenotools": {
-        "repo": "bylaws/libadrenotools",
-        "sha": "8fae8ce254",
-        "hash": "db4a74ce15559c75e01d1868a90701519b655d77f2a343bbee283a42f8332dc9046960fb022dc969f205e457348a3f99cb8be6e1cd91264d2ae1235294b9f9b2",
+        "repo": "eden-emulator/libadrenotools",
+        "sha": "8ba23b42d7",
+        "hash": "f6526620cb752876edc5ed4c0925d57b873a8218ee09ad10859ee476e9333259784f61c1dcc55a2bcba597352d18aff22cd2e4c1925ec2ae94074e09d7da2265",
         "patches": [
             "0001-linkerns-cpm.patch"
         ]
@@ -180,8 +180,8 @@
     "discord-rpc": {
         "package": "DiscordRPC",
         "repo": "eden-emulator/discord-rpc",
-        "sha": "1cf7772bb6",
-        "hash": "9a6c35887dcacceb4ba1bf3141edb73b05b2abc719a8d81dad9cb9dd5b039ce203946787335d9d738af669c10cf2534638b645635a22096fc28dcae2475e0cbe",
+        "sha": "0d8b2d6a37",
+        "hash": "8213c43dcb0f7d479f5861091d111ed12fbdec1e62e6d729d65a4bc181d82f48a35d5fd3cd5c291f2393ac7c9681eabc6b76609755f55376284c8a8d67e148f3",
         "find_args": "MODULE"
     },
     "simpleini": {

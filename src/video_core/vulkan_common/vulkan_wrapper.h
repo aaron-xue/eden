@@ -216,10 +216,11 @@ struct DeviceDispatch : InstanceDispatch {
     PFN_vkCmdDrawIndirectCount vkCmdDrawIndirectCount{};
     PFN_vkCmdDrawIndexedIndirectCount vkCmdDrawIndexedIndirectCount{};
     PFN_vkCmdDrawIndirectByteCountEXT vkCmdDrawIndirectByteCountEXT{};
+    PFN_vkCmdDrawMultiEXT vkCmdDrawMultiEXT{};
+    PFN_vkCmdDrawMultiIndexedEXT vkCmdDrawMultiIndexedEXT{};
     PFN_vkCmdEndConditionalRenderingEXT vkCmdEndConditionalRenderingEXT{};
     PFN_vkCmdEndDebugUtilsLabelEXT vkCmdEndDebugUtilsLabelEXT{};
     PFN_vkCmdEndQuery vkCmdEndQuery{};
-    PFN_vkCmdResetQueryPool vkCmdResetQueryPool{};
     PFN_vkCmdEndRenderPass vkCmdEndRenderPass{};
     PFN_vkCmdEndTransformFeedbackEXT vkCmdEndTransformFeedbackEXT{};
     PFN_vkCmdFillBuffer vkCmdFillBuffer{};
@@ -238,6 +239,8 @@ struct DeviceDispatch : InstanceDispatch {
     PFN_vkCmdSetDepthWriteEnableEXT vkCmdSetDepthWriteEnableEXT{};
     PFN_vkCmdSetPrimitiveRestartEnableEXT vkCmdSetPrimitiveRestartEnableEXT{};
     PFN_vkCmdSetRasterizerDiscardEnableEXT vkCmdSetRasterizerDiscardEnableEXT{};
+    PFN_vkCmdSetAlphaToCoverageEnableEXT vkCmdSetAlphaToCoverageEnableEXT{};
+    PFN_vkCmdSetAlphaToOneEnableEXT vkCmdSetAlphaToOneEnableEXT{};
     PFN_vkCmdSetConservativeRasterizationModeEXT vkCmdSetConservativeRasterizationModeEXT{};
     PFN_vkCmdSetLineRasterizationModeEXT vkCmdSetLineRasterizationModeEXT{};
     PFN_vkCmdSetLineStippleEnableEXT vkCmdSetLineStippleEnableEXT{};
@@ -1140,9 +1143,6 @@ public:
     VkCommandBuffer operator*() const noexcept {
         return handle;
     }
-    void ResetQueryPool(VkQueryPool query_pool, uint32_t first, uint32_t count) const noexcept {
-        dld->vkCmdResetQueryPool(handle, query_pool, first, count);
-    }
     void Begin(const VkCommandBufferBeginInfo& begin_info) const {
         Check(dld->vkBeginCommandBuffer(handle, &begin_info));
     }
@@ -1237,6 +1237,19 @@ public:
                                   u32 stride) {
         dld->vkCmdDrawIndirectByteCountEXT(handle, instance_count, first_instance, counter_buffer,
                                            counter_buffer_offset, counter_offset, stride);
+    }
+
+    void DrawMultiEXT(u32 draw_count, const VkMultiDrawInfoEXT* vertex_info,
+                      u32 instance_count, u32 first_instance, u32 stride) const noexcept {
+        dld->vkCmdDrawMultiEXT(handle, draw_count, vertex_info, instance_count, first_instance,
+                               stride);
+    }
+
+    void DrawMultiIndexedEXT(u32 draw_count, const VkMultiDrawIndexedInfoEXT* index_info,
+                             u32 instance_count, u32 first_instance, u32 stride,
+                             const int32_t* vertex_offset) const noexcept {
+        dld->vkCmdDrawMultiIndexedEXT(handle, draw_count, index_info, instance_count,
+                                      first_instance, stride, vertex_offset);
     }
 
     void ClearAttachments(Span<VkClearAttachment> attachments,
@@ -1469,6 +1482,14 @@ public:
 
     void SetLogicOpEnableEXT(bool enable) const noexcept {
         dld->vkCmdSetLogicOpEnableEXT(handle, enable ? VK_TRUE : VK_FALSE);
+    }
+
+    void SetAlphaToCoverageEnableEXT(bool enable) const noexcept {
+        dld->vkCmdSetAlphaToCoverageEnableEXT(handle, enable ? VK_TRUE : VK_FALSE);
+    }
+
+    void SetAlphaToOneEnableEXT(bool enable) const noexcept {
+        dld->vkCmdSetAlphaToOneEnableEXT(handle, enable ? VK_TRUE : VK_FALSE);
     }
 
     void SetDepthClampEnableEXT(bool enable) const noexcept {
