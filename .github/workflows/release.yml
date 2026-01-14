@@ -21,6 +21,16 @@ jobs:
           distribution: temurin
           java-version: 17
       
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install glslang-tools libvulkan-dev python3-requests -y
+
+      - name: Install sccache
+        uses: Eden-CI/sccache-action@v0.0.2
+        with:
+          disable_annotations: true
+      
       - name: Grant execute permission for Gradle wrapper
         run: chmod +x ./gradlew
         working-directory: src/android
